@@ -1,0 +1,9 @@
+[package]
+name = "location"
+edition = "2024.beta"
+
+# Remove explicit Sui dependency to use the default framework version
+# Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+location_addr = "0x0"

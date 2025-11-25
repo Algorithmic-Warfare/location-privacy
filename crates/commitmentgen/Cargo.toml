@@ -1,0 +1,31 @@
+[package]
+name = "commitmentgen"
+version = "0.1.0"
+edition = "2021"
+
+[[example]]
+name = "trusted_setup_example"
+path = "examples/trusted_setup_example.rs"
+
+[[example]]
+name = "commitment_demo"
+path = "examples/commitment_demo.rs"
+
+[[example]]
+name = "e2e_test"
+path = "examples/e2e_test.rs"
+
+[dependencies]
+ark-bn254 = "0.4.0"
+ark-ec = "0.4.0"
+ark-ff = "0.4.0"
+ark-groth16 = "0.4.0"
+ark-relations = "0.4.0"
+ark-std = "0.4.0"
+ark-r1cs-std = "0.4.0"
+ark-crypto-primitives = "0.4.0"
+ark-serialize = "0.4.0"
+ark-snark = "0.4.0"
+rand = "0.8.5"
+sha3 = "0.10.8"
+num-bigint = "0.4.4"

@@ -1,0 +1,4 @@
+
+packages/location/build/*
+crates/commitmentgen/build/*
+crates/commitmentgen/target/*
