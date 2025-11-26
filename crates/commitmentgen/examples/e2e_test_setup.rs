@@ -1,11 +1,11 @@
-use commitmentgen::{
-    Coordinates, generate_blinding,
-    ProximityProver, trusted_setup, get_poseidon_config, create_poseidon_commitment, coord_to_fr
-};
-use ark_bn254::{Fr, Bn254};
-use ark_serialize::CanonicalSerialize;
+use ark_bn254::{Bn254, Fr};
 use ark_groth16::Groth16;
+use ark_serialize::CanonicalSerialize;
 use ark_snark::SNARK;
+use commitmentgen::{
+    coord_to_fr, create_poseidon_commitment, generate_blinding, get_poseidon_config, trusted_setup,
+    Coordinates, ProximityProver,
+};
 
 /// End-to-end test that generates data for Sui Move contract verification
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,9 +20,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_distance_squared = Fr::from(100_000_000u64); // (10km * 1000)^2 = 100_000_000
 
     // Perform trusted setup with panic handling
-    let setup_result = std::panic::catch_unwind(|| {
-        trusted_setup::single_party_setup(max_distance_squared)
-    });
+    let setup_result =
+        std::panic::catch_unwind(|| trusted_setup::single_party_setup(max_distance_squared));
 
     let setup_result = match setup_result {
         Ok(Ok(result)) => result,
@@ -47,13 +46,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // SSU location (server knows this)
     let ssu_location = Coordinates {
-        x: -23534879266777860000i128,  // User's specified X coordinate
-        y: -435314932817330200i128,    // User's specified Y coordinate
-        z: -4336253132989268000i128,   // User's specified Z coordinate
+        x: -23534879266777860000i128, // User's specified X coordinate
+        y: -435314932817330200i128,   // User's specified Y coordinate
+        z: -4336253132989268000i128,  // User's specified Z coordinate
     };
 
     let blinding = generate_blinding();
-    
+
     // Generate Poseidon hash commitment (not EC Pedersen)
     let poseidon_config = get_poseidon_config();
     let commitment_hash = create_poseidon_commitment(
@@ -63,13 +62,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         blinding,
         &poseidon_config,
     );
-    
+
     // Serialize the Poseidon hash (32 bytes)
     let mut commitment_bytes = Vec::new();
-    commitment_hash.serialize_compressed(&mut commitment_bytes).unwrap();
+    commitment_hash
+        .serialize_compressed(&mut commitment_bytes)
+        .unwrap();
 
-    println!("   SSU Location: ({}, {}, {})", ssu_location.x, ssu_location.y, ssu_location.z);
-    println!("   Poseidon commitment hash generated: {} bytes", commitment_bytes.len());
+    println!(
+        "   SSU Location: ({}, {}, {})",
+        ssu_location.x, ssu_location.y, ssu_location.z
+    );
+    println!(
+        "   Poseidon commitment hash generated: {} bytes",
+        commitment_bytes.len()
+    );
 
     // ============================================================================
     // Phase 3: Generate proximity proof (server side)
@@ -79,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Player location (within range - close to SSU location)
     let player_location = Coordinates {
-        x: -23534879266777860000i128 + 1500,  // 1500 meters from SSU X (~500m from SSU)
+        x: -23534879266777860000i128 + 1500, // 1500 meters from SSU X (~500m from SSU)
         y: -435314932817330200i128 + 1800,   // 1800 meters from SSU Y (~200m from SSU)
         z: -4336253132989268000i128 + 450,   // 450 meters from SSU Z
     };
@@ -102,7 +109,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e);
         }
         Err(panic_payload) => {
-            println!("Panic occurred during proof generation: {:?}", panic_payload);
+            println!(
+                "Panic occurred during proof generation: {:?}",
+                panic_payload
+            );
             return Err("Proof generation panicked".into());
         }
     };
@@ -116,9 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ============================================================================
 
     println!("4. Verifying proof in Rust...");
-    let pvk_result = std::panic::catch_unwind(|| {
-        Groth16::<Bn254>::process_vk(&vk_clone)
-    });
+    let pvk_result = std::panic::catch_unwind(|| Groth16::<Bn254>::process_vk(&vk_clone));
 
     let pvk = match pvk_result {
         Ok(Ok(pvk)) => pvk,
@@ -127,14 +135,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
         Err(panic_payload) => {
-            println!("Panic occurred processing verifying key: {:?}", panic_payload);
+            println!(
+                "Panic occurred processing verifying key: {:?}",
+                panic_payload
+            );
             return Err("Processing verifying key panicked".into());
         }
     };
 
-    let verify_result = std::panic::catch_unwind(|| {
-        Groth16::<Bn254>::verify_proof(&pvk, &proof, &public_inputs)
-    });
+    let verify_result =
+        std::panic::catch_unwind(|| Groth16::<Bn254>::verify_proof(&pvk, &proof, &public_inputs));
 
     let is_valid = match verify_result {
         Ok(Ok(valid)) => valid,
@@ -143,7 +153,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
         Err(panic_payload) => {
-            println!("Panic occurred during proof verification: {:?}", panic_payload);
+            println!(
+                "Panic occurred during proof verification: {:?}",
+                panic_payload
+            );
             return Err("Proof verification panicked".into());
         }
     };
@@ -155,7 +168,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Proof verification failed".into());
     }
 
-    println!("   Player Location: ({}, {}, {})", player_location.x, player_location.y, player_location.z);
+    println!(
+        "   Player Location: ({}, {}, {})",
+        player_location.x, player_location.y, player_location.z
+    );
     println!("   Proof generated: {} bytes", proof_bytes.len());
     println!("   Public inputs: {} bytes", public_inputs_bytes.len());
 
@@ -168,7 +184,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Serialize verifying key with panic handling
     let serialize_result = std::panic::catch_unwind(|| -> Result<Vec<u8>, String> {
         let mut vk_bytes = Vec::new();
-        vk_clone.serialize_compressed(&mut vk_bytes).map_err(|e| e.to_string())?;
+        vk_clone
+            .serialize_compressed(&mut vk_bytes)
+            .map_err(|e| e.to_string())?;
         Ok(vk_bytes)
     });
 
@@ -179,7 +197,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
         Err(panic_payload) => {
-            println!("Panic occurred during verifying key serialization: {:?}", panic_payload);
+            println!(
+                "Panic occurred during verifying key serialization: {:?}",
+                panic_payload
+            );
             return Err("Verifying key serialization panicked".into());
         }
     };
@@ -207,16 +228,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Generating proof with wrong verification key...");
     // Create a different trusted setup for wrong VK
     let wrong_max_distance_squared = Fr::from(50_000_000u64); // Different constraint (7km instead of 10km)
-    let wrong_setup_result = std::panic::catch_unwind(|| {
-        trusted_setup::single_party_setup(wrong_max_distance_squared)
-    });
+    let wrong_setup_result =
+        std::panic::catch_unwind(|| trusted_setup::single_party_setup(wrong_max_distance_squared));
 
     let wrong_vk_bytes = match wrong_setup_result {
         Ok(Ok(result)) => {
             let mut vk_bytes = Vec::new();
-            result.verifying_key.serialize_compressed(&mut vk_bytes).map_err(|e| e.to_string())?;
+            result
+                .verifying_key
+                .serialize_compressed(&mut vk_bytes)
+                .map_err(|e| e.to_string())?;
             vk_bytes
-        },
+        }
         _ => {
             println!("Failed to create wrong VK, using corrupted VK instead");
             let mut wrong_vk = vk_bytes.clone();
@@ -237,21 +260,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test case 3: Additional validation - different user within 10km (should succeed)
     println!("   Generating additional validation test with different coordinates within 10km...");
-    
+
     // Different SSU location
     let ssu_location_2 = Coordinates {
-        x: -23534879266777860000i128 + 5000,   // 5000 meters from original SSU X
-        y: -435314932817330200i128 + 3000,     // 3000 meters from original SSU Y
-        z: -4336253132989268000i128 + 1000,    // 1000 meters from original SSU Z
+        x: -23534879266777860000i128 + 5000, // 5000 meters from original SSU X
+        y: -435314932817330200i128 + 3000,   // 3000 meters from original SSU Y
+        z: -4336253132989268000i128 + 1000,  // 1000 meters from original SSU Z
     };
-    
+
     // Different player location within 10km of SSU
     let player_location_2 = Coordinates {
-        x: -23534879266777860000i128 + 5200,   // 5200 meters from original SSU X (~200m from SSU_2)
-        y: -435314932817330200i128 + 2800,     // 2800 meters from original SSU Y (~200m from SSU_2)
-        z: -4336253132989268000i128 + 950,     // 950 meters from original SSU Z
+        x: -23534879266777860000i128 + 5200, // 5200 meters from original SSU X (~200m from SSU_2)
+        y: -435314932817330200i128 + 2800,   // 2800 meters from original SSU Y (~200m from SSU_2)
+        z: -4336253132989268000i128 + 950,   // 950 meters from original SSU Z
     };
-    
+
     // Generate new Poseidon commitment and proof for this scenario
     let blinding_2 = generate_blinding();
     let commitment_hash_2 = create_poseidon_commitment(
@@ -262,8 +285,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &poseidon_config,
     );
     let mut commitment_bytes_2 = Vec::new();
-    commitment_hash_2.serialize_compressed(&mut commitment_bytes_2).unwrap();
-    
+    commitment_hash_2
+        .serialize_compressed(&mut commitment_bytes_2)
+        .unwrap();
+
     // Generate proof with panic handling
     let proof_2_result = std::panic::catch_unwind(|| {
         prover.generate_proof(
@@ -282,11 +307,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e);
         }
         Err(panic_payload) => {
-            println!("Panic occurred during second proof generation: {:?}", panic_payload);
+            println!(
+                "Panic occurred during second proof generation: {:?}",
+                panic_payload
+            );
             return Err("Second proof generation panicked".into());
         }
     };
-    
+
     let proof_bytes_2 = ProximityProver::serialize_proof(&proof_2);
     let public_inputs_bytes_2 = ProximityProver::serialize_public_inputs(&public_inputs_2);
 
@@ -298,16 +326,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Absolute value coordinates (positive versions of the negative coordinates)
     let absolute_ssu_location = Coordinates {
-        x: 23534879266777860000i128,  // Absolute value of user's X coordinate
-        y: 435314932817330200i128,    // Absolute value of user's Y coordinate
-        z: 4336253132989268000i128,   // Absolute value of user's Z coordinate
+        x: 23534879266777860000i128, // Absolute value of user's X coordinate
+        y: 435314932817330200i128,   // Absolute value of user's Y coordinate
+        z: 4336253132989268000i128,  // Absolute value of user's Z coordinate
     };
 
     // Player location close to absolute coordinates
     let absolute_player_location = Coordinates {
-        x: -23534879266777860000i128,  // 
-        y: -435314932817330200i128,    // 
-        z: -4336253132989268000i128,    // 
+        x: -23534879266777860000i128, //
+        y: -435314932817330200i128,   //
+        z: -4336253132989268000i128,  //
     };
 
     // Generate Poseidon commitment and proof for absolute coordinates
@@ -320,7 +348,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &poseidon_config,
     );
     let mut absolute_commitment_bytes = Vec::new();
-    absolute_commitment_hash.serialize_compressed(&mut absolute_commitment_bytes).unwrap();
+    absolute_commitment_hash
+        .serialize_compressed(&mut absolute_commitment_bytes)
+        .unwrap();
 
     // Generate proof with panic handling
     let absolute_proof_result = std::panic::catch_unwind(|| {
@@ -334,9 +364,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let (absolute_proof_bytes, absolute_public_inputs_bytes) = match absolute_proof_result {
-        Ok(Ok(result)) => {
-            (ProximityProver::serialize_proof(&result.0), ProximityProver::serialize_public_inputs(&result.1))
-        },
+        Ok(Ok(result)) => (
+            ProximityProver::serialize_proof(&result.0),
+            ProximityProver::serialize_public_inputs(&result.1),
+        ),
         _ => {
             println!("Absolute coordinates proof generation failed as expected - using valid proof instead");
             // Use the original valid proof for the absolute coordinates test
@@ -345,7 +376,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create a temporary Move test file
-    let move_test_content = format!(r#"
+    let move_test_content = format!(
+        r#"
 #[test_only]
 module location_addr::location_tests;
 
@@ -832,77 +864,198 @@ fun test_proof_works_with_correct_commitment() {{
 "#,
         // Test 1: test_e2e_proximity_verification
         // Init VK
-        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        commitment_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Verify proof
-        proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        
+        proof_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
+        public_inputs_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Test 2: test_corrupted_proof_fails
         // Init VK
-        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        commitment_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Verify with corrupted proof
-        corrupted_proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        corrupted_public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        
+        corrupted_proof_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
+        corrupted_public_inputs_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Test 3: test_wrong_verification_key_fails
         // Init WRONG VK
-        wrong_vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        wrong_vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        commitment_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Verify with proof from different VK
-        proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        
+        proof_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
+        public_inputs_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Test 4: test_wrong_public_inputs_fails
         // Init VK
-        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        commitment_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Verify with wrong public inputs
-        proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        wrong_public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        
+        proof_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
+        wrong_public_inputs_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Test 5: test_user_within_10km_succeeds
         // Init VK
-        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment with different coords
-        commitment_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        commitment_bytes_2
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Verify proof
-        proof_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        public_inputs_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        
+        proof_bytes_2
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
+        public_inputs_bytes_2
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Test 6: test_invalid_inversed_sign_value_coordinates_fails
         // Init VK
-        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment with absolute value coords
-        absolute_commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        absolute_commitment_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Verify proof
-        absolute_proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        absolute_public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        
+        absolute_proof_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
+        absolute_public_inputs_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Test 7: test_commitment_hash_mismatch_fails
         // Init VK
-        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment with SSU_B hash
-        commitment_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        commitment_bytes_2
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Proof for SSU_A
-        proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        proof_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Public inputs for SSU_A (wrong for commitment B)
-        public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        
+        public_inputs_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Test 8: test_proof_works_with_correct_commitment
         // Init VK
-        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        vk_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Create commitment with SSU_A hash
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        commitment_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Proof for SSU_A
-        proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        proof_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
         // Public inputs for SSU_A (correct!)
-        public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        public_inputs_bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", "),
     );
 
     // Write the test to a file in the workspace
@@ -917,18 +1070,45 @@ fun test_proof_works_with_correct_commitment() {{
 
     println!("\nE2E Test Data Generated Successfully!");
     println!("\nSummary:");
-    println!("• Poseidon Commitment Hash: {} bytes (single Fr field element)", commitment_bytes.len());
+    println!(
+        "• Poseidon Commitment Hash: {} bytes (single Fr field element)",
+        commitment_bytes.len()
+    );
     println!("• Verifying Key: {} bytes", vk_bytes.len());
     println!("• Valid Proof: {} bytes", proof_bytes.len());
-    println!("• Valid Public Inputs: {} bytes (commitment_hash + max_distance_squared)", public_inputs_bytes.len());
-    println!("• Additional Valid Proof (different coords): {} bytes", proof_bytes_2.len());
-    println!("• Additional Valid Public Inputs: {} bytes", public_inputs_bytes_2.len());
-    println!("• Absolute Value Commitment Hash: {} bytes", absolute_commitment_bytes.len());
-    println!("• Absolute Value Proof: {} bytes", absolute_proof_bytes.len());
-    println!("• Absolute Value Public Inputs: {} bytes", absolute_public_inputs_bytes.len());
-    println!("• Invalid Proof (corrupted): {} bytes", corrupted_proof_bytes.len());
+    println!(
+        "• Valid Public Inputs: {} bytes (commitment_hash + max_distance_squared)",
+        public_inputs_bytes.len()
+    );
+    println!(
+        "• Additional Valid Proof (different coords): {} bytes",
+        proof_bytes_2.len()
+    );
+    println!(
+        "• Additional Valid Public Inputs: {} bytes",
+        public_inputs_bytes_2.len()
+    );
+    println!(
+        "• Absolute Value Commitment Hash: {} bytes",
+        absolute_commitment_bytes.len()
+    );
+    println!(
+        "• Absolute Value Proof: {} bytes",
+        absolute_proof_bytes.len()
+    );
+    println!(
+        "• Absolute Value Public Inputs: {} bytes",
+        absolute_public_inputs_bytes.len()
+    );
+    println!(
+        "• Invalid Proof (corrupted): {} bytes",
+        corrupted_proof_bytes.len()
+    );
     println!("• Invalid Proof (wrong VK): {} bytes", wrong_vk_bytes.len());
-    println!("• Invalid Proof (wrong public inputs): {} bytes", wrong_public_inputs_bytes.len());
+    println!(
+        "• Invalid Proof (wrong public inputs): {} bytes",
+        wrong_public_inputs_bytes.len()
+    );
     println!("\nNOTE: Commitment is now a Poseidon hash (32 bytes), not EC coordinates");
     println!("      Public inputs: [commitment_hash (32 bytes), max_distance_squared (32 bytes)]");
     println!("\nNext steps:");

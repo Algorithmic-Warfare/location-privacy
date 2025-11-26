@@ -1,5 +1,5 @@
-use commitmentgen::trusted_setup::{TwoPartySetup, single_party_setup, serialize_setup_result};
 use ark_bn254::Fr;
+use commitmentgen::trusted_setup::{serialize_setup_result, single_party_setup, TwoPartySetup};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("CommitmentGen Trusted Setup Example");
@@ -14,7 +14,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Single-party setup (not secure for production)
     let single_setup = single_party_setup(max_distance_squared)?;
     println!("Single-party setup completed");
-    println!("   Proving key size: {} queries", single_setup.proving_key.a_query.len());
+    println!(
+        "   Proving key size: {} queries",
+        single_setup.proving_key.a_query.len()
+    );
 
     // Serialize the keys
     let (pk_bytes, vk_bytes) = serialize_setup_result(&single_setup)?;
@@ -41,7 +44,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Finalize setup
     let two_party_result = two_party_setup.finalize_setup()?;
     println!("Two-party setup finalized!");
-    println!("   Proving key size: {} queries", two_party_result.proving_key.a_query.len());
+    println!(
+        "   Proving key size: {} queries",
+        two_party_result.proving_key.a_query.len()
+    );
 
     println!("\nTrusted setup ceremony completed successfully!");
     println!("\nNext steps:");

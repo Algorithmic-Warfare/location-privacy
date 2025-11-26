@@ -1,5 +1,7 @@
-use commitmentgen::{generate_blinding, create_poseidon_commitment, get_poseidon_config, coord_to_fr, Coordinates};
 use ark_serialize::CanonicalSerialize;
+use commitmentgen::{
+    coord_to_fr, create_poseidon_commitment, generate_blinding, get_poseidon_config, Coordinates,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Location Commitment Generation Demo");
@@ -11,13 +13,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example coordinates: Seattle, WA (47.6062°N, -122.3321°W)
     // Converted to millimeters for precision
     let seattle_coords = Coordinates {
-        x: 47606200i128,  // 47.6062° * 10^4 (fixed-point)
+        x: 47606200i128,   // 47.6062° * 10^4 (fixed-point)
         y: -122332100i128, // -122.3321° * 10^4 (fixed-point)
-        z: 0i128,           // Sea level
+        z: 0i128,          // Sea level
     };
 
     println!("Target Location: Seattle, WA");
-    println!("   Coordinates: ({}, {}, {})", seattle_coords.x, seattle_coords.y, seattle_coords.z);
+    println!(
+        "   Coordinates: ({}, {}, {})",
+        seattle_coords.x, seattle_coords.y, seattle_coords.z
+    );
 
     // Generate blinding factor
     let blinding = generate_blinding();
@@ -39,7 +44,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Serialized commitment: {} bytes", commitment_bytes.len());
 
     // Display first few bytes for verification
-    println!("Commitment bytes (first 32): {:?}", &commitment_bytes[..32.min(commitment_bytes.len())]);
+    println!(
+        "Commitment bytes (first 32): {:?}",
+        &commitment_bytes[..32.min(commitment_bytes.len())]
+    );
 
     // Demonstrate that different blinding factors create different commitments
     let blinding2 = generate_blinding();
