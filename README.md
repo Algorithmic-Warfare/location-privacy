@@ -250,9 +250,8 @@ cd packages/location && sui move build
 ### Run a full e2e example test
 Start from project repo root.
 ```bash
-# Build the e2e test data (for use in verifying in move)
-cd crates/commitmentgen
-cargo run --example e2e_test_setup 
+# Build the e2e test data (location commitments, proofs, verifying keys, public bytes) (for use in verifying in move)
+cd crates/commitmentgen && cargo run --example e2e_test_setup 
 
 # Copy the generated data to move's test folder
 cp ./generated_move_tests.move ../../packages/location/tests/location_tests.move
