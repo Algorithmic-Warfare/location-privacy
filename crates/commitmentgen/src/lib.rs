@@ -2069,8 +2069,8 @@ mod tests {
         );
 
         assert!(valid_proof_result.is_ok(), 
-            "✓ Valid commitment with matching witness should succeed");
-        println!("  ✓ PASS: Valid proof generated successfully\n");
+            "Valid commitment with matching witness should succeed");
+        println!("  PASS: Valid proof generated successfully\n");
 
         // Test case 2: Commitment for wrong coordinates (attacker scenario)
         println!("Test 2: Commitment mismatch - attacker tries to use wrong coordinates...");
@@ -2107,7 +2107,7 @@ mod tests {
         assert!(attack_proof_result.is_err(), 
             "✗ SECURITY REQUIREMENT: Proof generation MUST fail when commitment doesn't match witness! \
              This proves the circuit verifies C = x*G + y*H + z*K + r*M");
-        println!("  ✓ PASS: Attack correctly rejected (constraint violation)\n");
+        println!("  PASS: Attack correctly rejected (constraint violation)\n");
 
         // Test case 3: Wrong blinding factor
         println!("Test 3: Wrong blinding factor...");
@@ -2147,7 +2147,7 @@ mod tests {
         assert!(wrong_blinding_result.is_err(), 
             "✗ SECURITY REQUIREMENT: Proof MUST fail when blinding factor doesn't match! \
              This proves the circuit checks the blinding factor r in C = x*G + y*H + z*K + r*M");
-        println!("  ✓ PASS: Wrong blinding factor correctly rejected\n");
+        println!("  PASS: Wrong blinding factor correctly rejected\n");
 
         // Test case 4: Tampered x coordinate
         println!("Test 4: Tampered x coordinate in witness...");
@@ -2173,7 +2173,7 @@ mod tests {
         assert!(tampered_x_result.is_err(), 
             "✗ SECURITY REQUIREMENT: Proof MUST fail when x coordinate is tampered! \
              This proves the circuit verifies x component in C = x*G + y*H + z*K + r*M");
-        println!("  ✓ PASS: Tampered x coordinate correctly rejected\n");
+        println!("  PASS: Tampered x coordinate correctly rejected\n");
 
         // Test case 5: Tampered y coordinate
         println!("Test 5: Tampered y coordinate in witness...");
@@ -2199,7 +2199,7 @@ mod tests {
         assert!(tampered_y_result.is_err(), 
             "✗ SECURITY REQUIREMENT: Proof MUST fail when y coordinate is tampered! \
              This proves the circuit verifies y component in C = x*G + y*H + z*K + r*M");
-        println!("  ✓ PASS: Tampered y coordinate correctly rejected\n");
+        println!("  PASS: Tampered y coordinate correctly rejected\n");
 
         // Test case 6: Tampered z coordinate
         println!("Test 6: Tampered z coordinate in witness...");
@@ -2225,7 +2225,7 @@ mod tests {
         assert!(tampered_z_result.is_err(), 
             "✗ SECURITY REQUIREMENT: Proof MUST fail when z coordinate is tampered! \
              This proves the circuit verifies z component in C = x*G + y*H + z*K + r*M");
-        println!("  ✓ PASS: Tampered z coordinate correctly rejected\n");
+        println!("  PASS: Tampered z coordinate correctly rejected\n");
 
         // Test case 7: Multiple simultaneous tampering attempts
         println!("Test 7: Multiple coordinates tampered simultaneously...");
@@ -2250,7 +2250,7 @@ mod tests {
 
         assert!(multi_tamper_result.is_err(), 
             "✗ SECURITY REQUIREMENT: Proof MUST fail when multiple values are tampered!");
-        println!("  ✓ PASS: Multiple tampering correctly rejected\n");
+        println!("  PASS: Multiple tampering correctly rejected\n");
 
         println!("========================================");
         println!("ALL TESTS PASSED! ✓");
@@ -2258,11 +2258,11 @@ mod tests {
         println!("\nThe circuit properly verifies Poseidon commitment:");
         println!("  C = Poseidon(x, y, z, r)");
         println!("\nSecurity properties validated:");
-        println!("  ✓ Binding: Cannot change coordinates without changing commitment (collision resistance)");
-        println!("  ✓ Hiding: Random blinding factor hides coordinates (hash preimage resistance)");
-        println!("  ✓ Verification: Circuit enforces cryptographic commitment constraint");
-        println!("  ✓ Completeness: Valid commitments generate valid proofs");
-        println!("  ✓ Soundness: Invalid commitments cannot generate valid proofs");
+        println!("  Binding: Cannot change coordinates without changing commitment (collision resistance)");
+        println!("  Hiding: Random blinding factor hides coordinates (hash preimage resistance)");
+        println!("  Verification: Circuit enforces cryptographic commitment constraint");
+        println!("  Completeness: Valid commitments generate valid proofs");
+        println!("  Soundness: Invalid commitments cannot generate valid proofs");
         println!("\nPerformance achieved:");
         println!("  • Constraints: ~150-200 (vs ~3 simplified, ~1000+ EC)");
         println!("  • Proof time: ~2-3 seconds (practical for production)");
@@ -2333,7 +2333,7 @@ mod tests {
 
         assert!(proof_result.is_err(), 
             "Simplified implementation correctly rejects mismatched coordinates");
-        println!("  ✓ PASS: Mismatched coordinates rejected (field equality check)");
+        println!("  PASS: Mismatched coordinates rejected (field equality check)");
         
         // Test 2: What the simplified implementation DOESN'T check
         println!("\nTest 2: What simplified implementation DOESN'T protect against...");
@@ -2371,7 +2371,7 @@ mod tests {
         });
 
         if proof_result_2.is_err() {
-            println!("  ✓ Blinding factor IS enforced with Poseidon implementation!");
+            println!("  Blinding factor IS enforced with Poseidon implementation!");
             println!("  The hash C = Poseidon(x, y, z, r) ensures blinding factor must match.");
         } else {
             println!("  ⚠️  WARNING: Proof succeeded with DIFFERENT blinding factor!");
@@ -2386,9 +2386,9 @@ mod tests {
         println!("Then run the ignored test:");
         println!("  cargo test test_proper_poseidon_commitment_verification_guide -- --ignored");
         println!("\nWhy Poseidon? (vs Elliptic Curve Pedersen)");
-        println!("  ✓ Faster: ~150-200 constraints vs ~1000+ for EC");
-        println!("  ✓ Simpler: Hash-based vs complex curve arithmetic");
-        println!("  ✓ Practical: 2-3 second proofs vs 5-10 seconds");
-        println!("  ✓ Secure: 128-bit collision resistance (production-ready)");
+        println!("  Faster: ~150-200 constraints vs ~1000+ for EC");
+        println!("  Simpler: Hash-based vs complex curve arithmetic");
+        println!("  Practical: 2-3 second proofs vs 5-10 seconds");
+        println!("  Secure: 128-bit collision resistance (production-ready)");
     }
 }

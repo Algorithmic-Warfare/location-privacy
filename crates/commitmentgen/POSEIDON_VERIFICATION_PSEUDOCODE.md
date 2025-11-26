@@ -416,7 +416,7 @@ fn test_poseidon_commitment_circuit_verification() {
     // Verify proof
     assert!(Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)?);
     
-    println!("✓ Poseidon commitment verified successfully!");
+    println!("Poseidon commitment verified successfully!");
     println!("  Commitment: 32 bytes");
     println!("  Constraints: ~150-200");
     println!("  Proof time: ~2-3 seconds");
@@ -498,19 +498,19 @@ rand = "0.8"
 ### When to Use Each Approach
 
 **Simplified (current):**
-- ✓ Demos and prototypes
-- ✓ Testing circuit logic
+- Demos and prototypes
+- Testing circuit logic
 - ✗ Production (no security)
 
 **Poseidon (recommended):**
-- ✓ Production deployments
-- ✓ Balance of security and performance
-- ✓ Standard cryptographic primitive
-- ✓ Practical proof times
+- Production deployments
+- Balance of security and performance
+- Standard cryptographic primitive
+- Practical proof times
 
 **Elliptic Curve:**
-- ✓ Maximum security requirements
-- ✓ Research implementations
+- Maximum security requirements
+- Research implementations
 - ✗ Production (too slow)
 - ✗ Complex to implement correctly
 

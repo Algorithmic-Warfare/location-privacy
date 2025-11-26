@@ -181,26 +181,26 @@ Altitude 0m → 0
 
 ### Attack Resistance
 
-**Offline Brute Force:** ✓ Blocked
+**Offline Brute Force:** Blocked
 - Requires finding collision in Poseidon hash with 254-bit blinding factor
 - 2^254 computational complexity (infeasible)
 - Poseidon provides collision resistance and preimage resistance
 
-**Proof Replay:** ✓ Blocked
+**Proof Replay:** Blocked
 - Nonce increments after each verification
 - Old proofs fail nonce check
 
-**Proof Reuse Across Commitments:** ✓ Blocked
+**Proof Reuse Across Commitments:** Blocked
 - Commitment binding validation ensures proof matches specific LocationCommitment object
 - Cannot use proof for SSU_A's location with SSU_B's commitment
 - Prevents "proof shopping" attacks
 
-**Arbitrary Location Proofs:** ✓ Blocked
+**Arbitrary Location Proofs:** Blocked
 - Server must generate proof for coordinates matching a pre-published commitment
 - Cannot generate ad-hoc proximity proofs without corresponding on-chain commitment
 - Ensures all verified proximities are to legitimate, pre-registered locations
 
-**Proof Pre-Computation:** ✓ Blocked
+**Proof Pre-Computation:** Blocked
 - Proofs tied to specific nonce
 - Cannot generate proofs for future nonces
 
@@ -208,7 +208,7 @@ Altitude 0m → 0
 - Compromised blinding factors allow attacker to generate proofs
 - Mitigation: HSM storage, key rotation, rate limiting
 
-**Network Analysis:** ✓ Blocked
+**Network Analysis:** Blocked
 - On-chain data reveals no coordinate information
 - Proof/verification patterns reveal no location data
 
