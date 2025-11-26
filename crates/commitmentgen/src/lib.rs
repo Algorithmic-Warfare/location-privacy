@@ -1,4 +1,4 @@
-use ark_bn254::{Bn254, Fr, G1Affine, Fq};
+use ark_bn254::{Bn254, Fr, Fq};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_groth16::{Groth16, ProvingKey, VerifyingKey, Proof};
 use ark_r1cs_std::prelude::AllocVar;
@@ -10,9 +10,7 @@ use ark_snark::SNARK;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_std::{UniformRand, Zero};
 use ark_ff::PrimeField;
-use sha2::{Sha256, Digest};
 use rand::rngs::OsRng;
-use ark_ec::{AffineRepr, CurveGroup};
 use ark_crypto_primitives::sponge::poseidon::{PoseidonSponge, PoseidonConfig};
 use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_crypto_primitives::crh::{
@@ -36,59 +34,6 @@ pub fn coord_to_fr(coord: i128) -> Fr {
     } else {
         let abs_coord = (-coord) as u128;
         -Fr::from(abs_coord)
-    }
-}
-
-/// Hash-to-curve function for deriving cryptographically secure generators
-/// Uses SHA256 and try-and-increment to map domain-separated strings to curve points
-fn hash_to_curve(domain_separator: &str) -> G1Affine {
-    let mut counter = 0u32;
-    loop {
-        // Create input: domain_separator || counter
-        let mut hasher = Sha256::new();
-        hasher.update(domain_separator.as_bytes());
-        hasher.update(&counter.to_be_bytes());
-        let hash = hasher.finalize();
-
-        // Convert hash to field element (take first 32 bytes, reduce mod field order)
-        // For BN254, the base field Fq has order that fits in ~32 bytes
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&hash[..32]);
-
-        // Try to create a point from this hash
-        // Use try-and-increment method: if the x-coordinate gives a valid curve point, use it
-        if let Some(point) = G1Affine::from_random_bytes(&bytes) {
-            if !point.is_zero() {
-                return point;
-            }
-        }
-
-        counter += 1;
-        // Prevent infinite loops (though extremely unlikely)
-        if counter > 1000 {
-            panic!("Failed to find valid curve point after 1000 attempts");
-        }
-    }
-}
-
-/// Pedersen commitment parameters with cryptographically secure generators
-#[derive(Clone)]
-pub struct PedersenParams {
-    pub g: G1Affine, // Generator for x-coordinate
-    pub h: G1Affine, // Generator for y-coordinate
-    pub k: G1Affine, // Generator for z-coordinate
-    pub m: G1Affine, // Generator for blinding factor r
-}
-
-impl PedersenParams {
-    /// Create new Pedersen parameters with hash-to-curve derived generators
-    pub fn new() -> Self {
-        Self {
-            g: hash_to_curve("location-commitment-x-generator"),
-            h: hash_to_curve("location-commitment-y-generator"),
-            k: hash_to_curve("location-commitment-z-generator"),
-            m: hash_to_curve("location-commitment-blinding-generator"),
-        }
     }
 }
 
@@ -167,105 +112,43 @@ pub struct Coordinates {
     pub z: i128,
 }
 
-/// Server-side commitment creator
-pub struct LocationCommitmentGenerator {
-    params: PedersenParams,
+/// Generate a cryptographically secure blinding factor with at least 256 bits of entropy.
+///
+/// Security requirements:
+/// - Uses cryptographically secure RNG (OsRng)
+/// - Generates values in the full BN254 scalar field (254 bits)
+/// - Provides at least 256 bits of entropy (exceeds 128-bit security level)
+/// - Ensures uniform distribution across the field
+pub fn generate_blinding() -> Fr {
+    Fr::rand(&mut rand::rngs::OsRng)
 }
 
-impl LocationCommitmentGenerator {
-    pub fn new(params: PedersenParams) -> Self {
-        Self { params }
+/// Validate that a blinding factor meets entropy requirements.
+///
+/// Checks that the blinding factor:
+/// - Is not zero (would make commitment deterministic)
+/// - Has sufficient entropy (at least 254 bits for BN254 field)
+/// - Is within the valid field range
+pub fn validate_blinding_entropy(blinding: &Fr) -> Result<(), String> {
+    // Minimum entropy requirement: 254 bits (matching BN254 scalar field size)
+    const MIN_ENTROPY_BITS: usize = 254;
+
+    // BN254 scalar field has 254 bits, so Fr::rand() provides full entropy
+    // But we validate it's not zero and within expected range
+    if blinding.is_zero() {
+        return Err("Blinding factor cannot be zero - would make commitment deterministic".to_string());
     }
 
-    /// Generate a cryptographically secure blinding factor with at least 256 bits of entropy.
-    ///
-    /// Security requirements:
-    /// - Uses cryptographically secure RNG (OsRng)
-    /// - Generates values in the full BN254 scalar field (254 bits)
-    /// - Provides at least 256 bits of entropy (exceeds 128-bit security level)
-    /// - Ensures uniform distribution across the field
-    pub fn generate_blinding() -> Fr {
-        Fr::rand(&mut rand::rngs::OsRng)
+    // For BN254 Fr field (254 bits), any non-zero value has sufficient entropy
+    // since the field size provides exactly 254 bits of entropy
+    if Fr::MODULUS_BIT_SIZE < MIN_ENTROPY_BITS as u32 {
+        return Err(format!(
+            "Field size {} bits is less than required {} bits of entropy",
+            Fr::MODULUS_BIT_SIZE, MIN_ENTROPY_BITS
+        ));
     }
 
-    /// Validate that a blinding factor meets entropy requirements.
-    ///
-    /// Checks that the blinding factor:
-    /// - Is not zero (would make commitment deterministic)
-    /// - Has sufficient entropy (at least 254 bits for BN254 field)
-    /// - Is within the valid field range
-    pub fn validate_blinding_entropy(blinding: &Fr) -> Result<(), String> {
-        // Minimum entropy requirement: 254 bits (matching BN254 scalar field size)
-        const MIN_ENTROPY_BITS: usize = 254;
-
-        // BN254 scalar field has 254 bits, so Fr::rand() provides full entropy
-        // But we validate it's not zero and within expected range
-        if blinding.is_zero() {
-            return Err("Blinding factor cannot be zero - would make commitment deterministic".to_string());
-        }
-
-        // For BN254 Fr field (254 bits), any non-zero value has sufficient entropy
-        // since the field size provides exactly 254 bits of entropy
-        if Fr::MODULUS_BIT_SIZE < MIN_ENTROPY_BITS as u32 {
-            return Err(format!(
-                "Field size {} bits is less than required {} bits of entropy",
-                Fr::MODULUS_BIT_SIZE, MIN_ENTROPY_BITS
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Create a Pedersen commitment: C = x*G + y*H + z*K + r*M
-    pub fn create_commitment(
-        &self,
-        coords: &Coordinates,
-        blinding: &Fr,
-    ) -> G1Affine {
-        // Convert i128 coordinates to field elements
-        // Note: Coordinates can be negative and will be handled properly
-        let x_fr = coord_to_fr(coords.x);
-        let y_fr = coord_to_fr(coords.y);
-        let z_fr = coord_to_fr(coords.z);
-
-        // Perform elliptic curve scalar multiplications and additions
-        let commitment = (self.params.g * x_fr) + (self.params.h * y_fr) + (self.params.k * z_fr) + (self.params.m * blinding);
-
-        commitment.into_affine()
-    }
-
-    /// Serialize commitment to 32 bytes for on-chain storage
-    pub fn serialize_commitment(commitment: &G1Affine) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        commitment.serialize_compressed(&mut bytes).unwrap();
-        bytes
-    }
-
-    /// Serialize target coordinates as field elements to 96 bytes (x, y, and z coordinates)
-    /// Note: This is used for the simplified demo implementation where commitment == target coords
-    /// In production, this should serialize the actual Pedersen commitment point
-    pub fn serialize_commitment_coordinates_from_coords(coords: &Coordinates) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        // Serialize x coordinate (32 bytes)
-        coord_to_fr(coords.x).serialize_compressed(&mut bytes).unwrap();
-        // Serialize y coordinate (32 bytes)
-        coord_to_fr(coords.y).serialize_compressed(&mut bytes).unwrap();
-        // Serialize z coordinate (32 bytes)
-        coord_to_fr(coords.z).serialize_compressed(&mut bytes).unwrap();
-        bytes
-    }
-    
-    /// Serialize commitment coordinates to 64 bytes (x and y coordinates) - DEPRECATED
-    /// Use serialize_commitment_coordinates_from_coords for the simplified demo
-    #[allow(dead_code)]
-    pub fn serialize_commitment_coordinates(commitment: &G1Affine) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        // Serialize x coordinate (32 bytes)
-        fq_to_fr(commitment.x).serialize_compressed(&mut bytes).unwrap();
-        // Serialize y coordinate (32 bytes)
-        fq_to_fr(commitment.y).serialize_compressed(&mut bytes).unwrap();
-        bytes
-    }
+    Ok(())
 }
 
 /// zkSNARK circuit for proximity proof with Poseidon hash commitment
@@ -327,7 +210,7 @@ impl ConstraintSynthesizer<Fr> for ProximityCircuit {
         })?;
         let max_distance_squared = FpVar::new_input(cs.clone(), || Ok(self.max_distance_squared))?;
 
-        // Range checks for coordinates - disabled for negative coordinate support
+        // Range checks for coordinates - disabled for negative coordinate test support
         // TODO: Implement proper modular range checking for signed coordinates
         // x_t.enforce_cmp(&max_var, Ordering::Less, true)?;
         // y_t.enforce_cmp(&max_var, Ordering::Less, true)?;
@@ -390,18 +273,13 @@ impl ConstraintSynthesizer<Fr> for ProximityCircuit {
 // Proof generator
 pub struct ProximityProver {
     proving_key: ProvingKey<Bn254>,
-    params: PedersenParams,
 }
 
 impl ProximityProver {
     /// Initialize with proving key (generated during setup)
-    pub fn new(
-        proving_key: ProvingKey<Bn254>,
-        params: PedersenParams,
-    ) -> Self {
+    pub fn new(proving_key: ProvingKey<Bn254>) -> Self {
         Self {
             proving_key,
-            params,
         }
     }
 
@@ -411,7 +289,7 @@ impl ProximityProver {
         target_coords: &Coordinates,
         blinding: &Fr,
         player_coords: &Coordinates,
-        commitment: &G1Affine,
+        _commitment: &Fr,
         max_distance_km: f64,
     ) -> Result<(Proof<Bn254>, Vec<Fr>), Box<dyn std::error::Error>> {
         // Convert max distance to squared units (in meters)
@@ -478,10 +356,8 @@ impl ProximityProver {
 /// Complete example usage
 pub fn example_usage() {
     // 1. Setup phase (one-time)
-    // Generate cryptographically secure generators using hash-to-curve
-    let params = PedersenParams::new();
-
-    let commitment_gen = LocationCommitmentGenerator::new(params.clone());
+    // Get Poseidon configuration for commitment generation
+    let poseidon_config = get_poseidon_config();
 
     // 2. Server creates commitment for SSU location
     let ssu_location = Coordinates {
@@ -490,12 +366,21 @@ pub fn example_usage() {
         z: 500i128,  // 500 meters above reference plane
     };
 
-    let blinding = LocationCommitmentGenerator::generate_blinding();
-    let commitment = commitment_gen.create_commitment(&ssu_location, &blinding);
-    let commitment_bytes = LocationCommitmentGenerator::serialize_commitment(&commitment);
+    let blinding = generate_blinding();
+    let commitment_hash = create_poseidon_commitment(
+        coord_to_fr(ssu_location.x),
+        coord_to_fr(ssu_location.y),
+        coord_to_fr(ssu_location.z),
+        blinding,
+        &poseidon_config,
+    );
 
-    println!("Commitment created: {} bytes", commitment_bytes.len());
-    println!("Commitment point: ({}, {})", commitment.x, commitment.y);
+    // Serialize commitment hash for on-chain storage
+    let mut commitment_bytes = Vec::new();
+    commitment_hash.serialize_compressed(&mut commitment_bytes).unwrap();
+
+    println!("Poseidon commitment created: {} bytes", commitment_bytes.len());
+    println!("Commitment hash: {:?}", commitment_hash);
     // Now publish commitment_bytes on-chain using create_commitment()
 
     // 3. Player requests proximity check
@@ -506,12 +391,12 @@ pub fn example_usage() {
     };
 
     // 4. Server generates proof (requires proving key from trusted setup)
-    // let prover = ProximityProver::new(proving_key, params);
+    // let prover = ProximityProver::new(proving_key);
     // let (proof, public_inputs) = prover.generate_proof(
     //     &ssu_location,
     //     &blinding,
     //     &player_location,
-    //     &commitment,
+    //     &G1Affine::default(), // Commitment parameter not used in Poseidon version
     //     10.0, // 10km max distance
     // ).unwrap();
 
@@ -703,16 +588,14 @@ pub mod trusted_setup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::{Fr, G1Affine};
-    use ark_std::{Zero};
-    use ark_ec::CurveGroup;
+    use ark_bn254::Fr;
+    use ark_std::Zero;
 
-    /// Test that Pedersen commitments have the binding property:
+    /// Test that Poseidon commitments have the binding property:
     /// Different coordinates should produce different commitments
     #[test]
-    fn test_pedersen_binding_property() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+    fn test_poseidon_binding_property() {
+        let poseidon_config = get_poseidon_config();
 
         let coords1 = Coordinates { 
             x: 1000i128, 
@@ -724,20 +607,31 @@ mod tests {
             y: 2000i128, 
             z: 500i128 
         }; // Different x
-        let blinding = LocationCommitmentGenerator::generate_blinding();
+        let blinding = generate_blinding();
 
-        let commitment1 = commitment_gen.create_commitment(&coords1, &blinding);
-        let commitment2 = commitment_gen.create_commitment(&coords2, &blinding);
+        let commitment1 = create_poseidon_commitment(
+            coord_to_fr(coords1.x),
+            coord_to_fr(coords1.y),
+            coord_to_fr(coords1.z),
+            blinding,
+            &poseidon_config,
+        );
+        let commitment2 = create_poseidon_commitment(
+            coord_to_fr(coords2.x),
+            coord_to_fr(coords2.y),
+            coord_to_fr(coords2.z),
+            blinding,
+            &poseidon_config,
+        );
 
         assert_ne!(commitment1, commitment2, "Different coordinates should produce different commitments");
     }
 
-    /// Test that Pedersen commitments are deterministic:
+    /// Test that Poseidon commitments are deterministic:
     /// Same inputs should produce the same commitment
     #[test]
-    fn test_pedersen_deterministic() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+    fn test_poseidon_deterministic() {
+        let poseidon_config = get_poseidon_config();
         let coords = Coordinates { 
             x: 1000i128, 
             y: 2000i128, 
@@ -745,8 +639,20 @@ mod tests {
         };
         let blinding = Fr::from(42u64); // Fixed blinding factor
 
-        let commitment1 = commitment_gen.create_commitment(&coords, &blinding);
-        let commitment2 = commitment_gen.create_commitment(&coords, &blinding);
+        let commitment1 = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding,
+            &poseidon_config,
+        );
+        let commitment2 = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         assert_eq!(commitment1, commitment2, "Same inputs should produce the same commitment");
     }
@@ -755,8 +661,7 @@ mod tests {
     /// Same coordinates with different blinding factors should produce different commitments
     #[test]
     fn test_blinding_factor_effect() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
         let coords = Coordinates { 
             x: 1000i128, 
             y: 2000i128, 
@@ -766,8 +671,20 @@ mod tests {
         let blinding1 = Fr::from(123u64);
         let blinding2 = Fr::from(456u64);
 
-        let commitment1 = commitment_gen.create_commitment(&coords, &blinding1);
-        let commitment2 = commitment_gen.create_commitment(&coords, &blinding2);
+        let commitment1 = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding1,
+            &poseidon_config,
+        );
+        let commitment2 = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding2,
+            &poseidon_config,
+        );
 
         assert_ne!(commitment1, commitment2, "Different blinding factors should produce different commitments");
     }
@@ -775,8 +692,7 @@ mod tests {
     /// Test that each coordinate component affects the commitment independently
     #[test]
     fn test_coordinate_components_independence() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
         let blinding = Fr::from(999u64);
 
         // Base coordinates
@@ -785,7 +701,13 @@ mod tests {
             y: 2000i128, 
             z: 500i128 
         };
-        let base_commitment = commitment_gen.create_commitment(&base_coords, &blinding);
+        let base_commitment = create_poseidon_commitment(
+            coord_to_fr(base_coords.x),
+            coord_to_fr(base_coords.y),
+            coord_to_fr(base_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // Change X coordinate
         let x_changed = Coordinates { 
@@ -793,7 +715,13 @@ mod tests {
             y: 2000i128, 
             z: 500i128 
         };
-        let x_commitment = commitment_gen.create_commitment(&x_changed, &blinding);
+        let x_commitment = create_poseidon_commitment(
+            coord_to_fr(x_changed.x),
+            coord_to_fr(x_changed.y),
+            coord_to_fr(x_changed.z),
+            blinding,
+            &poseidon_config,
+        );
         assert_ne!(base_commitment, x_commitment, "Changing X should affect commitment");
 
         // Change Y coordinate
@@ -802,7 +730,13 @@ mod tests {
             y: 2001i128, 
             z: 500i128 
         };
-        let y_commitment = commitment_gen.create_commitment(&y_changed, &blinding);
+        let y_commitment = create_poseidon_commitment(
+            coord_to_fr(y_changed.x),
+            coord_to_fr(y_changed.y),
+            coord_to_fr(y_changed.z),
+            blinding,
+            &poseidon_config,
+        );
         assert_ne!(base_commitment, y_commitment, "Changing Y should affect commitment");
 
         // Change Z coordinate
@@ -811,67 +745,91 @@ mod tests {
             y: 2000i128, 
             z: 501i128 
         };
-        let z_commitment = commitment_gen.create_commitment(&z_changed, &blinding);
+        let z_commitment = create_poseidon_commitment(
+            coord_to_fr(z_changed.x),
+            coord_to_fr(z_changed.y),
+            coord_to_fr(z_changed.z),
+            blinding,
+            &poseidon_config,
+        );
         assert_ne!(base_commitment, z_commitment, "Changing Z should affect commitment");
     }
 
-    /// Test serialization and deserialization of commitments
+    /// Test serialization and deserialization of Poseidon commitments (field elements)
     #[test]
     fn test_commitment_serialization_roundtrip() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
         let coords = Coordinates { 
             x: 1000i128, 
             y: 2000i128, 
             z: 500i128 
         };
-        let blinding = LocationCommitmentGenerator::generate_blinding();
+        let blinding = generate_blinding();
 
-        let original_commitment = commitment_gen.create_commitment(&coords, &blinding);
-        let serialized = LocationCommitmentGenerator::serialize_commitment(&original_commitment);
+        let original_commitment = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding,
+            &poseidon_config,
+        );
+        
+        let mut serialized = Vec::new();
+        original_commitment.serialize_compressed(&mut serialized).unwrap();
 
         // Deserialize back
-        let deserialized_commitment = G1Affine::deserialize_compressed(&serialized[..]).unwrap();
+        let deserialized_commitment = Fr::deserialize_compressed(&serialized[..]).unwrap();
 
         assert_eq!(original_commitment, deserialized_commitment, "Serialization roundtrip should preserve commitment");
         assert_eq!(serialized.len(), 32, "Serialized commitment should be 32 bytes");
     }
 
-    /// Test that commitments are not the identity element (unless all inputs are zero)
+    /// Test that Poseidon commitments are not zero (unless all inputs are zero)
     #[test]
-    fn test_commitment_not_identity() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+    fn test_commitment_not_zero() {
+        let poseidon_config = get_poseidon_config();
 
-        // Non-zero coordinates should not produce identity
+        // Non-zero coordinates should not produce zero
         let coords = Coordinates { 
             x: 1000i128, 
             y: 2000i128, 
             z: 500i128 
         };
-        let blinding = LocationCommitmentGenerator::generate_blinding();
-        let commitment = commitment_gen.create_commitment(&coords, &blinding);
+        let blinding = generate_blinding();
+        let commitment = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
-        assert!(!commitment.is_zero(), "Non-zero inputs should not produce identity element");
+        assert!(!commitment.is_zero(), "Non-zero inputs should not produce zero commitment");
 
-        // Zero coordinates with zero blinding should produce identity (g^0 * h^0 * k^0 * m^0 = 1)
+        // Even zero coordinates with zero blinding should produce non-zero hash
+        // (Poseidon hash of zeros is not zero due to round constants)
         let zero_coords = Coordinates { 
             x: 0i128, 
             y: 0i128, 
             z: 0i128 
         };
         let zero_blinding = Fr::from(0u64);
-        let zero_commitment = commitment_gen.create_commitment(&zero_coords, &zero_blinding);
+        let zero_commitment = create_poseidon_commitment(
+            coord_to_fr(zero_coords.x),
+            coord_to_fr(zero_coords.y),
+            coord_to_fr(zero_coords.z),
+            zero_blinding,
+            &poseidon_config,
+        );
 
-        assert!(zero_commitment.is_zero(), "Zero inputs should produce identity element");
+        assert!(!zero_commitment.is_zero(), "Poseidon hash of zeros should not be zero (has round constants)");
     }
 
-    /// Test mathematical correctness of Pedersen commitment formula
-    /// C = x*G + y*H + z*K + r*M
+    /// Test collision resistance of Poseidon commitment
+    /// Different inputs should produce different outputs
     #[test]
-    fn test_pedersen_mathematical_correctness() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params.clone());
+    fn test_poseidon_collision_resistance() {
+        let poseidon_config = get_poseidon_config();
         let coords = Coordinates { 
             x: 2i128, 
             y: 3i128, 
@@ -879,23 +837,35 @@ mod tests {
         };
         let blinding = Fr::from(5u64);
 
-        let commitment = commitment_gen.create_commitment(&coords, &blinding);
+        let commitment1 = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
-        // Manually compute the commitment: x*G + y*H + z*K + r*M
-        let x_fr = coord_to_fr(coords.x);
-        let y_fr = coord_to_fr(coords.y);
-        let z_fr = coord_to_fr(coords.z);
+        // Create commitment with slightly different inputs - should be completely different
+        let coords2 = Coordinates { 
+            x: 2i128, 
+            y: 3i128, 
+            z: 5i128  // Changed from 4 to 5
+        };
+        let commitment2 = create_poseidon_commitment(
+            coord_to_fr(coords2.x),
+            coord_to_fr(coords2.y),
+            coord_to_fr(coords2.z),
+            blinding,
+            &poseidon_config,
+        );
 
-        let manual_commitment = ((params.g * x_fr) + (params.h * y_fr) + (params.k * z_fr) + (params.m * blinding)).into_affine();
-
-        assert_eq!(commitment, manual_commitment, "Commitment should match manual calculation");
+        assert_ne!(commitment1, commitment2, "Different inputs should produce different hash outputs");
     }
 
     /// Test that commitments work with large coordinates (within field range)
     #[test]
     fn test_large_coordinates() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
 
         // Test with large coordinates (within reasonable range for uint256)
         let coords = Coordinates { 
@@ -903,43 +873,21 @@ mod tests {
             y: i128::MAX, 
             z: i128::MAX 
         };
-        let blinding = LocationCommitmentGenerator::generate_blinding();
+        let blinding = generate_blinding();
 
         // This should not panic and should produce a valid commitment
-        let commitment = commitment_gen.create_commitment(&coords, &blinding);
+        let commitment = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding,
+            &poseidon_config,
+        );
         assert!(!commitment.is_zero(), "Large coordinates should produce valid commitment");
 
-        let serialized = LocationCommitmentGenerator::serialize_commitment(&commitment);
+        let mut serialized = Vec::new();
+        commitment.serialize_compressed(&mut serialized).unwrap();
         assert_eq!(serialized.len(), 32, "Serialized commitment should be 32 bytes");
-    }
-
-    /// Test that different Pedersen parameters produce different commitments
-    #[test]
-    fn test_different_parameters_different_commitments() {
-        let params1 = PedersenParams::new();
-        
-        // Create different parameters by using a different generator for h
-        let g2 = hash_to_curve("test-different-g2");
-        let h2 = hash_to_curve("test-different-h2"); // Different domain separator
-        let k2 = hash_to_curve("test-different-k2");
-        let m2 = hash_to_curve("test-different-m2");
-
-        let params2 = PedersenParams { g: g2, h: h2, k: k2, m: m2 };
-
-        let commitment_gen1 = LocationCommitmentGenerator::new(params1);
-        let commitment_gen2 = LocationCommitmentGenerator::new(params2);
-
-        let coords = Coordinates { 
-            x: 1000i128, 
-            y: 2000i128, 
-            z: 500i128 
-        };
-        let blinding = Fr::from(42u64);
-
-        let commitment1 = commitment_gen1.create_commitment(&coords, &blinding);
-        let commitment2 = commitment_gen2.create_commitment(&coords, &blinding);
-
-        assert_ne!(commitment1, commitment2, "Different parameters should produce different commitments");
     }
 
     /// Test that blinding factors are uniformly random
@@ -948,7 +896,7 @@ mod tests {
         // Generate multiple blinding factors and check they're different
         let mut blinding_factors = Vec::new();
         for _ in 0..100 {
-            blinding_factors.push(LocationCommitmentGenerator::generate_blinding());
+            blinding_factors.push(generate_blinding());
         }
 
         // Check that all are different (very unlikely to have duplicates with proper randomness)
@@ -964,27 +912,27 @@ mod tests {
     fn test_blinding_factor_entropy_requirements() {
         // Test that generated blinding factors pass validation
         for _ in 0..10 {
-            let blinding = LocationCommitmentGenerator::generate_blinding();
-            assert!(LocationCommitmentGenerator::validate_blinding_entropy(&blinding).is_ok(),
+            let blinding = generate_blinding();
+            assert!(validate_blinding_entropy(&blinding).is_ok(),
                 "Generated blinding factors should meet entropy requirements");
         }
 
         // Test validation of zero blinding factor (should fail)
         let zero_blinding = Fr::from(0u64);
-        let result = LocationCommitmentGenerator::validate_blinding_entropy(&zero_blinding);
+        let result = validate_blinding_entropy(&zero_blinding);
         assert!(result.is_err(), "Zero blinding factor should fail validation");
         assert!(result.unwrap_err().contains("cannot be zero"),
             "Error message should mention zero blinding factor");
 
         // Test validation of valid non-zero blinding factors
         let valid_blinding = Fr::from(42u64);
-        assert!(LocationCommitmentGenerator::validate_blinding_entropy(&valid_blinding).is_ok(),
+        assert!(validate_blinding_entropy(&valid_blinding).is_ok(),
             "Valid non-zero blinding factors should pass validation");
 
         // Test field size requirement (this should pass for BN254)
         // BN254 Fr has 254 bits, which exceeds our 256-bit requirement
         // This test ensures our entropy requirement is feasible
-        assert!(Fr::MODULUS_BIT_SIZE >= 254, "BN254 Fr field should have at least 254 bits");
+        const { assert!(Fr::MODULUS_BIT_SIZE >= 254, "BN254 Fr field should have at least 254 bits"); }
 
         println!(" Blinding factor entropy validation test passed");
         println!("   Field size: {} bits", Fr::MODULUS_BIT_SIZE);
@@ -1000,7 +948,7 @@ mod tests {
         // Generate a large sample of blinding factors
         let mut blinding_factors = Vec::with_capacity(SAMPLE_SIZE);
         for _ in 0..SAMPLE_SIZE {
-            blinding_factors.push(LocationCommitmentGenerator::generate_blinding());
+            blinding_factors.push(generate_blinding());
         }
 
         // Test 1: All factors should be unique (extremely unlikely to have duplicates)
@@ -1034,7 +982,7 @@ mod tests {
 
         for (i, &count) in msb_counts.iter().enumerate() {
             assert!(
-                count >= min_expected as u32 && count <= max_expected as u32,
+                count >= min_expected && count <= max_expected,
                 "MSB byte value {} appears {} times, expected roughly {} per bucket",
                 i, count, expected_per_bucket
             );
@@ -1050,9 +998,8 @@ mod tests {
     /// Test commitment properties with edge case coordinates
     #[test]
     fn test_edge_case_coordinates() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
-        let blinding = LocationCommitmentGenerator::generate_blinding();
+        let poseidon_config = get_poseidon_config();
+        let blinding = generate_blinding();
 
         // Test with zero coordinates (except one dimension)
         let x_only = Coordinates { 
@@ -1060,7 +1007,13 @@ mod tests {
             y: 0i128, 
             z: 0i128 
         };
-        let commitment_x = commitment_gen.create_commitment(&x_only, &blinding);
+        let commitment_x = create_poseidon_commitment(
+            coord_to_fr(x_only.x),
+            coord_to_fr(x_only.y),
+            coord_to_fr(x_only.z),
+            blinding,
+            &poseidon_config,
+        );
         assert!(!commitment_x.is_zero(), "X-only coordinates should produce valid commitment");
 
         let y_only = Coordinates { 
@@ -1068,7 +1021,13 @@ mod tests {
             y: 2000i128, 
             z: 0i128 
         };
-        let commitment_y = commitment_gen.create_commitment(&y_only, &blinding);
+        let commitment_y = create_poseidon_commitment(
+            coord_to_fr(y_only.x),
+            coord_to_fr(y_only.y),
+            coord_to_fr(y_only.z),
+            blinding,
+            &poseidon_config,
+        );
         assert!(!commitment_y.is_zero(), "Y-only coordinates should produce valid commitment");
 
         let z_only = Coordinates { 
@@ -1076,7 +1035,13 @@ mod tests {
             y: 0i128, 
             z: 500i128 
         };
-        let commitment_z = commitment_gen.create_commitment(&z_only, &blinding);
+        let commitment_z = create_poseidon_commitment(
+            coord_to_fr(z_only.x),
+            coord_to_fr(z_only.y),
+            coord_to_fr(z_only.z),
+            blinding,
+            &poseidon_config,
+        );
         assert!(!commitment_z.is_zero(), "Z-only coordinates should produce valid commitment");
 
         // All commitments should be different
@@ -1086,11 +1051,10 @@ mod tests {
     }
 
     /// Test that invalid blinding factor in proof generation would fail verification
-    /// This test demonstrates that the circuit must properly verify Pedersen commitment opening
+    /// This test demonstrates that the circuit must properly verify Poseidon commitment
     #[test]
     fn test_invalid_blinding_factor_verification_failure() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
 
         // Create commitment with specific coordinates and correct blinding factor
         let target_coords = Coordinates { 
@@ -1099,23 +1063,41 @@ mod tests {
             z: 500i128 
         };
         let correct_blinding = Fr::from(42u64);
-        let commitment = commitment_gen.create_commitment(&target_coords, &correct_blinding);
+        let commitment = create_poseidon_commitment(
+            coord_to_fr(target_coords.x),
+            coord_to_fr(target_coords.y),
+            coord_to_fr(target_coords.z),
+            correct_blinding,
+            &poseidon_config,
+        );
 
         // Create commitment with same coordinates but wrong blinding factor
         let wrong_blinding = Fr::from(43u64); // Different blinding factor
-        let wrong_commitment = commitment_gen.create_commitment(&target_coords, &wrong_blinding);
+        let wrong_commitment = create_poseidon_commitment(
+            coord_to_fr(target_coords.x),
+            coord_to_fr(target_coords.y),
+            coord_to_fr(target_coords.z),
+            wrong_blinding,
+            &poseidon_config,
+        );
 
         // The commitments should be different
         assert_ne!(commitment, wrong_commitment,
             "Different blinding factors should produce different commitments");
 
-        // In a properly implemented zkSNARK circuit that verifies C = x*G + y*H + z*K + r*M,
+        // In a properly implemented zkSNARK circuit that verifies C = Poseidon(x, y, z, r),
         // a proof generated with the correct blinding factor would only verify against
         // the correct commitment. A proof with wrong_blinding would fail verification
         // because the witness values wouldn't satisfy the commitment verification constraint.
 
         // Test that commitments are deterministic with same inputs
-        let commitment_again = commitment_gen.create_commitment(&target_coords, &correct_blinding);
+        let commitment_again = create_poseidon_commitment(
+            coord_to_fr(target_coords.x),
+            coord_to_fr(target_coords.y),
+            coord_to_fr(target_coords.z),
+            correct_blinding,
+            &poseidon_config,
+        );
         assert_eq!(commitment, commitment_again,
             "Same coordinates and blinding factor should produce same commitment");
 
@@ -1131,8 +1113,7 @@ mod tests {
     #[test]
     fn test_commitment_generation() {
         // Setup parameters
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
 
         // Test coordinates (3D Cartesian in meters)
         let coords = Coordinates {
@@ -1141,55 +1122,21 @@ mod tests {
             z: 500i128,   // 500 meters in Z
         };
 
-        let blinding = LocationCommitmentGenerator::generate_blinding();
-        let commitment = commitment_gen.create_commitment(&coords, &blinding);
-        let serialized = LocationCommitmentGenerator::serialize_commitment(&commitment);
+        let blinding = generate_blinding();
+        let commitment = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            blinding,
+            &poseidon_config,
+        );
+        
+        let mut serialized = Vec::new();
+        commitment.serialize_compressed(&mut serialized).unwrap();
 
-        // Verify serialization is correct size (compressed G1 point)
+        // Verify serialization is correct size (field element)
         assert_eq!(serialized.len(), 32);
-        println!("Commitment generated successfully: {} bytes", serialized.len());
-    }
-
-    /// Test that hash-to-curve generates distinct generators
-    #[test]
-    fn test_hash_to_curve_generators_are_distinct() {
-        let g = hash_to_curve("location-commitment-x-generator");
-        let h = hash_to_curve("location-commitment-y-generator");
-        let k = hash_to_curve("location-commitment-z-generator");
-        let m = hash_to_curve("location-commitment-blinding-generator");
-
-        // All generators should be distinct
-        assert_ne!(g, h, "X and Y generators should be different");
-        assert_ne!(g, k, "X and Z generators should be different");
-        assert_ne!(g, m, "X and blinding generators should be different");
-        assert_ne!(h, k, "Y and Z generators should be different");
-        assert_ne!(h, m, "Y and blinding generators should be different");
-        assert_ne!(k, m, "Z and blinding generators should be different");
-
-        // None should be the identity element
-        assert!(!g.is_zero(), "X generator should not be identity");
-        assert!(!h.is_zero(), "Y generator should not be identity");
-        assert!(!k.is_zero(), "Z generator should not be identity");
-        assert!(!m.is_zero(), "Blinding generator should not be identity");
-
-        // Verify they are valid curve points
-        assert!(g.is_on_curve(), "X generator should be on curve");
-        assert!(h.is_on_curve(), "Y generator should be on curve");
-        assert!(k.is_on_curve(), "Z generator should be on curve");
-        assert!(m.is_on_curve(), "Blinding generator should be on curve");
-    }
-
-    /// Test that PedersenParams::new() generates consistent parameters
-    #[test]
-    fn test_pedersen_params_consistency() {
-        let params1 = PedersenParams::new();
-        let params2 = PedersenParams::new();
-
-        // Should generate identical parameters (deterministic)
-        assert_eq!(params1.g, params2.g, "G generators should be identical");
-        assert_eq!(params1.h, params2.h, "H generators should be identical");
-        assert_eq!(params1.k, params2.k, "K generators should be identical");
-        assert_eq!(params1.m, params2.m, "M generators should be identical");
+        println!("Poseidon commitment generated successfully: {} bytes", serialized.len());
     }
 
     #[test]
@@ -1216,7 +1163,7 @@ mod tests {
         // Finalize setup
         let result = setup.finalize_setup().unwrap();
         // Check that we have a valid setup result
-        assert!(result.proving_key.a_query.len() > 0);
+        assert!(!result.proving_key.a_query.is_empty());
     }
 
     #[test]
@@ -1227,7 +1174,7 @@ mod tests {
         let result = single_party_setup(max_distance).unwrap();
 
         // Check that we have valid keys
-        assert!(result.proving_key.a_query.len() > 0);
+        assert!(!result.proving_key.a_query.is_empty());
     }
 
     /// Test that the ProximityCircuit correctly generates and verifies proofs
@@ -1268,9 +1215,8 @@ mod tests {
         let mut rng = thread_rng();
         let (proving_key, _verifying_key) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
 
-        // Create a prover instance (PedersenParams kept for compatibility, though not used in Poseidon version)
-        let params = PedersenParams::new();
-        let prover = ProximityProver::new(proving_key, params.clone());
+        // Create a prover instance
+        let prover = ProximityProver::new(proving_key);
 
         // Test data: coordinates within distance
         let target_coords = Coordinates { 
@@ -1284,7 +1230,16 @@ mod tests {
             z: 450i128 
         }; // ~500m away
         let blinding = Fr::from(42u64);
-        let commitment = params.g; // For this test, use a simple commitment
+        
+        // Generate Poseidon commitment for testing
+        let poseidon_config = get_poseidon_config();
+        let commitment = create_poseidon_commitment(
+            coord_to_fr(target_coords.x),
+            coord_to_fr(target_coords.y),
+            coord_to_fr(target_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // Generate proof
         let (proof, public_inputs) = prover.generate_proof(
@@ -1355,8 +1310,7 @@ mod tests {
         let (proving_key, _verifying_key) = Groth16::<Bn254>::circuit_specific_setup(valid_circuit, &mut rng).unwrap();
 
         // Create a prover instance
-        let params = PedersenParams::new();
-        let prover = ProximityProver::new(proving_key, params.clone());
+        let prover = ProximityProver::new(proving_key);
 
         // Test data: coordinates too far apart
         let target_coords = Coordinates { 
@@ -1370,7 +1324,16 @@ mod tests {
             z: 450i128 
         }; // ~14km away
         let blinding = Fr::from(42u64);
-        let commitment = params.g;
+        
+        // Generate Poseidon commitment for testing
+        let poseidon_config = get_poseidon_config();
+        let commitment = create_poseidon_commitment(
+            coord_to_fr(target_coords.x),
+            coord_to_fr(target_coords.y),
+            coord_to_fr(target_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // Test that proof generation fails when coordinates are too far apart
         // We expect this to panic because the constraint system is not satisfied
@@ -1389,38 +1352,11 @@ mod tests {
 
         println!(" Invalid distance rejection test passed");
     }
-    #[test]
-    fn test_hash_to_curve_robustness() {
-        // Test that different domain separators produce different points
-        let g1 = hash_to_curve("domain1");
-        let g2 = hash_to_curve("domain2");
-        assert_ne!(g1, g2, "Different domain separators should produce different points");
-
-        // Test that same domain separator produces same point (deterministic)
-        let g1_again = hash_to_curve("domain1");
-        assert_eq!(g1, g1_again, "Same domain separator should produce same point");
-
-        // Test with very long domain separators
-        let long_domain = "a".repeat(1000);
-        let g_long = hash_to_curve(&long_domain);
-        assert!(g_long.is_on_curve(), "Long domain separators should still produce valid curve points");
-
-        // Test with empty domain separator
-        let g_empty = hash_to_curve("");
-        assert!(g_empty.is_on_curve(), "Empty domain separator should produce valid curve point");
-
-        // Test that all generated points are distinct from identity
-        assert!(!g1.is_zero(), "Generated points should not be identity");
-        assert!(!g2.is_zero(), "Generated points should not be identity");
-        assert!(!g_long.is_zero(), "Generated points should not be identity");
-        assert!(!g_empty.is_zero(), "Generated points should not be identity");
-    }
 
     /// Test coordinate range validation and field boundary handling
     #[test]
     fn test_coordinate_range_validation() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
 
         // Test with very large coordinates (near field boundary)
         let large_coords = Coordinates {
@@ -1428,11 +1364,17 @@ mod tests {
             y: 2_000_000_000i128,
             z: 500_000_000i128,
         };
-        let blinding = LocationCommitmentGenerator::generate_blinding();
+        let blinding = generate_blinding();
 
         // Should not panic and should produce valid commitment
-        let commitment = commitment_gen.create_commitment(&large_coords, &blinding);
-        assert!(!commitment.is_zero(), "Large coordinates should produce valid commitment");
+        let commitment = create_poseidon_commitment(
+            coord_to_fr(large_coords.x),
+            coord_to_fr(large_coords.y),
+            coord_to_fr(large_coords.z),
+            blinding,
+            &poseidon_config,
+        );
+        assert_ne!(commitment, Fr::zero(), "Large coordinates should produce valid commitment");
 
         // Test with coordinates that would overflow in some representations
         let overflow_coords = Coordinates {
@@ -1441,8 +1383,14 @@ mod tests {
             z: i128::MAX,
         };
 
-        let commitment_overflow = commitment_gen.create_commitment(&overflow_coords, &blinding);
-        assert!(!commitment_overflow.is_zero(), "Large uint256 coordinates should produce valid commitment");
+        let commitment_overflow = create_poseidon_commitment(
+            coord_to_fr(overflow_coords.x),
+            coord_to_fr(overflow_coords.y),
+            coord_to_fr(overflow_coords.z),
+            blinding,
+            &poseidon_config,
+        );
+        assert_ne!(commitment_overflow, Fr::zero(), "Large uint256 coordinates should produce valid commitment");
 
         // Verify commitments are different
         assert_ne!(commitment, commitment_overflow, "Different coordinates should produce different commitments");
@@ -1451,8 +1399,7 @@ mod tests {
     /// Test error handling and input validation
     #[test]
     fn test_error_handling_and_input_validation() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
 
         // Test with zero blinding factor (should still work but be deterministic)
         let coords = Coordinates { 
@@ -1461,8 +1408,14 @@ mod tests {
             z: 500i128 
         };
         let zero_blinding = Fr::from(0u64);
-        let commitment_zero_blinding = commitment_gen.create_commitment(&coords, &zero_blinding);
-        assert!(!commitment_zero_blinding.is_zero(), "Zero blinding factor should still produce valid commitment");
+        let commitment_zero_blinding = create_poseidon_commitment(
+            coord_to_fr(coords.x),
+            coord_to_fr(coords.y),
+            coord_to_fr(coords.z),
+            zero_blinding,
+            &poseidon_config,
+        );
+        assert_ne!(commitment_zero_blinding, Fr::zero(), "Zero blinding factor should still produce valid commitment");
 
         // Test serialization roundtrip with various commitment sizes
         let test_coords = vec![
@@ -1484,15 +1437,24 @@ mod tests {
         ];
 
         for test_coord in test_coords {
-            let blinding = LocationCommitmentGenerator::generate_blinding();
-            let commitment = commitment_gen.create_commitment(&test_coord, &blinding);
-            let serialized = LocationCommitmentGenerator::serialize_commitment(&commitment);
+            let blinding = generate_blinding();
+            let commitment = create_poseidon_commitment(
+                coord_to_fr(test_coord.x),
+                coord_to_fr(test_coord.y),
+                coord_to_fr(test_coord.z),
+                blinding,
+                &poseidon_config,
+            );
 
-            // Should always be 32 bytes
+            // Serialize Fr field element to bytes
+            let mut serialized = Vec::new();
+            commitment.serialize_compressed(&mut serialized).unwrap();
+
+            // Should always be 32 bytes for BN254 Fr field element
             assert_eq!(serialized.len(), 32, "Commitment serialization should always be 32 bytes");
 
             // Roundtrip should preserve commitment
-            let deserialized = G1Affine::deserialize_compressed(&serialized[..]).unwrap();
+            let deserialized = Fr::deserialize_compressed(&serialized[..]).unwrap();
             assert_eq!(commitment, deserialized, "Serialization roundtrip should preserve commitment");
         }
     }
@@ -1527,8 +1489,7 @@ mod tests {
     /// Test that negative coordinates are handled correctly and absolute values don't validate
     #[test]
     fn test_negative_coordinates_absolute_value_validation() {
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
 
         // Test coordinates with negative values
         let negative_coords = Coordinates {
@@ -1547,8 +1508,20 @@ mod tests {
         let blinding = Fr::from(42u64);
 
         // Create commitments
-        let negative_commitment = commitment_gen.create_commitment(&negative_coords, &blinding);
-        let absolute_commitment = commitment_gen.create_commitment(&absolute_coords, &blinding);
+        let negative_commitment = create_poseidon_commitment(
+            coord_to_fr(negative_coords.x),
+            coord_to_fr(negative_coords.y),
+            coord_to_fr(negative_coords.z),
+            blinding,
+            &poseidon_config,
+        );
+        let absolute_commitment = create_poseidon_commitment(
+            coord_to_fr(absolute_coords.x),
+            coord_to_fr(absolute_coords.y),
+            coord_to_fr(absolute_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // Commitments should be different - negative coordinates are not the same as absolute values
         assert_ne!(negative_commitment, absolute_commitment,
@@ -1581,8 +1554,20 @@ mod tests {
             z: 4336253132989268000i128,
         };
 
-        let user_negative_commitment = commitment_gen.create_commitment(&user_negative_coords, &blinding);
-        let user_absolute_commitment = commitment_gen.create_commitment(&user_absolute_coords, &blinding);
+        let user_negative_commitment = create_poseidon_commitment(
+            coord_to_fr(user_negative_coords.x),
+            coord_to_fr(user_negative_coords.y),
+            coord_to_fr(user_negative_coords.z),
+            blinding,
+            &poseidon_config,
+        );
+        let user_absolute_commitment = create_poseidon_commitment(
+            coord_to_fr(user_absolute_coords.x),
+            coord_to_fr(user_absolute_coords.y),
+            coord_to_fr(user_absolute_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         assert_ne!(user_negative_commitment, user_absolute_commitment,
             "User's negative coordinates should produce different commitment than absolute values");
@@ -1603,10 +1588,10 @@ mod tests {
         // Setup trusted setup for proof generation
         let max_distance_squared = Fr::from(10_000_000u64); // 10km squared
         let setup_result = single_party_setup(max_distance_squared).unwrap();
-        let prover = ProximityProver::new(setup_result.proving_key, PedersenParams::new());
+        let prover = ProximityProver::new(setup_result.proving_key);
         let verifier = Groth16::<Bn254>::process_vk(&setup_result.verifying_key).unwrap();
 
-        let commitment_gen = LocationCommitmentGenerator::new(PedersenParams::new());
+        let poseidon_config = get_poseidon_config();
 
         // Test with negative coordinates
         let negative_target_coords = Coordinates {
@@ -1623,7 +1608,13 @@ mod tests {
         };
 
         let blinding = Fr::from(42u64);
-        let negative_commitment = commitment_gen.create_commitment(&negative_target_coords, &blinding);
+        let negative_commitment = create_poseidon_commitment(
+            coord_to_fr(negative_target_coords.x),
+            coord_to_fr(negative_target_coords.y),
+            coord_to_fr(negative_target_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // Generate proof for negative coordinates - this should succeed
         let (negative_proof, negative_public_inputs) = prover.generate_proof(
@@ -1645,7 +1636,13 @@ mod tests {
             z: 500i128,
         };
 
-        let absolute_commitment = commitment_gen.create_commitment(&absolute_target_coords, &blinding);
+        let absolute_commitment = create_poseidon_commitment(
+            coord_to_fr(absolute_target_coords.x),
+            coord_to_fr(absolute_target_coords.y),
+            coord_to_fr(absolute_target_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // Try to generate proof for absolute coordinates with far player location
         // This should fail because the player is too far from the absolute coordinates
@@ -1719,7 +1716,13 @@ mod tests {
             z: -4336253132989267550i128, // 50m away
         };
 
-        let user_negative_commitment = commitment_gen.create_commitment(&user_negative_coords, &blinding);
+        let user_negative_commitment = create_poseidon_commitment(
+            coord_to_fr(user_negative_coords.x),
+            coord_to_fr(user_negative_coords.y),
+            coord_to_fr(user_negative_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // Generate proof for negative coordinates
         let (user_negative_proof, user_negative_public_inputs) = prover.generate_proof(
@@ -1735,7 +1738,13 @@ mod tests {
         assert!(user_negative_verification, "User's negative coordinate proof should verify");
 
         // Try to generate proof for absolute coordinates with player near negative coords - should fail
-        let user_absolute_commitment = commitment_gen.create_commitment(&user_absolute_coords, &blinding);
+        let user_absolute_commitment = create_poseidon_commitment(
+            coord_to_fr(user_absolute_coords.x),
+            coord_to_fr(user_absolute_coords.y),
+            coord_to_fr(user_absolute_coords.z),
+            blinding,
+            &poseidon_config,
+        );
         let user_absolute_proof_result = std::panic::catch_unwind(|| {
             prover.generate_proof(
                 &user_absolute_coords,
@@ -1766,10 +1775,10 @@ mod tests {
         // Setup trusted setup for proof generation
         let max_distance_squared = Fr::from(10_000_000u64); // 10km squared
         let setup_result = single_party_setup(max_distance_squared).unwrap();
-        let prover = ProximityProver::new(setup_result.proving_key.clone(), PedersenParams::new());
+        let prover = ProximityProver::new(setup_result.proving_key.clone());
         let verifier = Groth16::<Bn254>::process_vk(&setup_result.verifying_key).unwrap();
 
-        let commitment_gen = LocationCommitmentGenerator::new(PedersenParams::new());
+        let poseidon_config = get_poseidon_config();
 
         // Create commitment for WRONG coordinates (what attacker claims)
         let wrong_coords = Coordinates {
@@ -1778,7 +1787,13 @@ mod tests {
             z: 777777i128,
         };
         let blinding = Fr::from(42u64);
-        let wrong_commitment = commitment_gen.create_commitment(&wrong_coords, &blinding);
+        let _wrong_commitment = create_poseidon_commitment(
+            coord_to_fr(wrong_coords.x),
+            coord_to_fr(wrong_coords.y),
+            coord_to_fr(wrong_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         // But generate proof claiming DIFFERENT coordinates (what attacker actually has)
         // This simulates an attacker who has coordinates near the target but provides
@@ -1816,7 +1831,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(wrong_commitment_hash), // Wrong commitment hash
             max_distance_squared,
-            poseidon_config,
+            poseidon_config: poseidon_config.clone(),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -1826,7 +1841,7 @@ mod tests {
         });
 
         // Proof generation should fail because commitment verification constraint is not satisfied
-        assert!(flawed_proof_result.is_err(), "SECURITY FIX: Proof generation should fail when commitment doesn't match witness coordinates! The circuit now properly verifies Pedersen commitment opening.");
+        assert!(flawed_proof_result.is_err(), "SECURITY FIX: Proof generation should fail when commitment doesn't match witness coordinates!");
 
         // For comparison, generate a proper proof where commitment matches witness
         let correct_coords = Coordinates {
@@ -1834,7 +1849,13 @@ mod tests {
             y: 2000i128,
             z: 500i128,
         };
-        let correct_commitment = commitment_gen.create_commitment(&correct_coords, &blinding);
+        let correct_commitment = create_poseidon_commitment(
+            coord_to_fr(correct_coords.x),
+            coord_to_fr(correct_coords.y),
+            coord_to_fr(correct_coords.z),
+            blinding,
+            &poseidon_config,
+        );
 
         let (correct_proof, correct_public_inputs) = prover.generate_proof(
             &correct_coords,
@@ -1881,19 +1902,30 @@ mod tests {
             Coordinates { x: 40_000_000, y: -30_000_000, z: 10_000_000 }, // Mixed large values
         ];
 
-        let params = PedersenParams::new();
-        let commitment_gen = LocationCommitmentGenerator::new(params);
+        let poseidon_config = get_poseidon_config();
 
         // All coordinates within bounds should work
         for coords in valid_coords {
-            let blinding = LocationCommitmentGenerator::generate_blinding();
-            let commitment = commitment_gen.create_commitment(&coords, &blinding);
-            assert!(!commitment.is_zero(), 
+            let blinding = generate_blinding();
+            let commitment = create_poseidon_commitment(
+                coord_to_fr(coords.x),
+                coord_to_fr(coords.y),
+                coord_to_fr(coords.z),
+                blinding,
+                &poseidon_config,
+            );
+            assert_ne!(commitment, Fr::zero(), 
                 "Valid coordinates ({}, {}, {}) should produce valid commitment", 
                 coords.x, coords.y, coords.z);
 
             // Verify commitment is deterministic
-            let commitment2 = commitment_gen.create_commitment(&coords, &blinding);
+            let commitment2 = create_poseidon_commitment(
+                coord_to_fr(coords.x),
+                coord_to_fr(coords.y),
+                coord_to_fr(coords.z),
+                blinding,
+                &poseidon_config,
+            );
             assert_eq!(commitment, commitment2, 
                 "Same coordinates should produce same commitment");
         }
@@ -1912,10 +1944,16 @@ mod tests {
         // 1. Be rejected at commitment creation time, or
         // 2. Cause proof generation to fail due to range check constraints
         for coords in extreme_coords {
-            let blinding = LocationCommitmentGenerator::generate_blinding();
-            let commitment = commitment_gen.create_commitment(&coords, &blinding);
+            let blinding = generate_blinding();
+            let commitment = create_poseidon_commitment(
+                coord_to_fr(coords.x),
+                coord_to_fr(coords.y),
+                coord_to_fr(coords.z),
+                blinding,
+                &poseidon_config,
+            );
             // Currently this passes, but with proper range checking it should be validated
-            assert!(!commitment.is_zero(), 
+            assert_ne!(commitment, Fr::zero(), 
                 "Extreme coordinates ({}, {}, {}) currently work but should be validated", 
                 coords.x, coords.y, coords.z);
         }
@@ -2285,7 +2323,6 @@ mod tests {
             max_coord: Fr::from(u128::MAX),
         };
 
-        let mut rng = OsRng;
         let proof_result = std::panic::catch_unwind(|| {
             Groth16::<Bn254>::prove(
                 &setup_result.proving_key,
@@ -2303,7 +2340,6 @@ mod tests {
         println!("  The current implementation checks: commitment_x == x_t, etc.");
         println!("  But it DOESN'T verify the cryptographic commitment:");
         println!("    Poseidon: C = Poseidon(x, y, z, r)");
-        println!("    OR Pedersen: C = x*G + y*H + z*K + r*M");
         println!("\n  This means:");
         println!("  ✗ No cryptographic binding (commitment is just the coordinates)");
         println!("  ✗ No hiding property (coordinates are revealed in commitment)");
@@ -2346,7 +2382,7 @@ mod tests {
         println!("SECURITY STATUS: Simplified (Demo Only)");
         println!("========================================");
         println!("To enable proper security, implement Poseidon hash commitment:");
-        println!("  See: PEDERSEN_VERIFICATION_PSEUDOCODE.md (updated for Poseidon)");
+        println!("  See: POSEIDON_VERIFICATION_PSEUDOCODE.md");
         println!("Then run the ignored test:");
         println!("  cargo test test_proper_poseidon_commitment_verification_guide -- --ignored");
         println!("\nWhy Poseidon? (vs Elliptic Curve Pedersen)");

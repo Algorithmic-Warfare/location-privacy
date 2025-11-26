@@ -1,5 +1,5 @@
 use commitmentgen::{
-    LocationCommitmentGenerator, PedersenParams, Coordinates,
+    Coordinates, generate_blinding,
     ProximityProver, trusted_setup, get_poseidon_config, create_poseidon_commitment, coord_to_fr
 };
 use ark_bn254::{Fr, Bn254};
@@ -16,10 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 1: Setup cryptographic parameters
     // ============================================================================
 
-    println!("\n1. Setting up Pedersen parameters...");
-    let params = PedersenParams::new();
-
-    println!("2. Performing trusted setup...");
+    println!("\n1. Performing trusted setup...");
     let max_distance_squared = Fr::from(100_000_000u64); // (10km * 1000)^2 = 100_000_000
 
     // Perform trusted setup with panic handling
@@ -40,16 +37,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let vk_clone = setup_result.verifying_key.clone();
-    let prover = ProximityProver::new(
-        setup_result.proving_key,
-        params.clone(),
-    );
+    let prover = ProximityProver::new(setup_result.proving_key);
 
     // ============================================================================
     // Phase 2: Generate location commitment (server side)
     // ============================================================================
 
-    println!("3. Generating location commitment...");
+    println!("2. Generating location commitment...");
 
     // SSU location (server knows this)
     let ssu_location = Coordinates {
@@ -58,8 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         z: -4336253132989268000i128,   // User's specified Z coordinate
     };
 
-    let commitment_gen = LocationCommitmentGenerator::new(params.clone());
-    let blinding = LocationCommitmentGenerator::generate_blinding();
+    let blinding = generate_blinding();
     
     // Generate Poseidon hash commitment (not EC Pedersen)
     let poseidon_config = get_poseidon_config();
@@ -82,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 3: Generate proximity proof (server side)
     // ============================================================================
 
-    println!("4. Generating proximity proof...");
+    println!("3. Generating proximity proof...");
 
     // Player location (within range - close to SSU location)
     let player_location = Coordinates {
@@ -92,14 +85,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Generate proof with panic handling
-    // Note: generate_proof still takes a dummy G1Affine parameter but uses Poseidon internally
-    let dummy_commitment = commitment_gen.create_commitment(&ssu_location, &blinding);
     let proof_result = std::panic::catch_unwind(|| {
         prover.generate_proof(
             &ssu_location,
             &blinding,
             &player_location,
-            &dummy_commitment,
+            &commitment_hash,
             10.0, // 10km max distance
         )
     });
@@ -124,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 6: Verify the proof in Rust to ensure it's valid
     // ============================================================================
 
-    println!("6. Verifying proof in Rust...");
+    println!("4. Verifying proof in Rust...");
     let pvk_result = std::panic::catch_unwind(|| {
         Groth16::<Bn254>::process_vk(&vk_clone)
     });
@@ -262,7 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // Generate new Poseidon commitment and proof for this scenario
-    let blinding_2 = LocationCommitmentGenerator::generate_blinding();
+    let blinding_2 = generate_blinding();
     let commitment_hash_2 = create_poseidon_commitment(
         coord_to_fr(ssu_location_2.x),
         coord_to_fr(ssu_location_2.y),
@@ -272,7 +263,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut commitment_bytes_2 = Vec::new();
     commitment_hash_2.serialize_compressed(&mut commitment_bytes_2).unwrap();
-    let dummy_commitment_2 = commitment_gen.create_commitment(&ssu_location_2, &blinding_2);
     
     // Generate proof with panic handling
     let proof_2_result = std::panic::catch_unwind(|| {
@@ -280,7 +270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &ssu_location_2,
             &blinding_2,
             &player_location_2,
-            &dummy_commitment_2,
+            &commitment_hash_2,
             10.0, // 10km max distance
         )
     });
@@ -321,7 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Generate Poseidon commitment and proof for absolute coordinates
-    let absolute_blinding = LocationCommitmentGenerator::generate_blinding();
+    let absolute_blinding = generate_blinding();
     let absolute_commitment_hash = create_poseidon_commitment(
         coord_to_fr(absolute_ssu_location.x),
         coord_to_fr(absolute_ssu_location.y),
@@ -331,7 +321,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut absolute_commitment_bytes = Vec::new();
     absolute_commitment_hash.serialize_compressed(&mut absolute_commitment_bytes).unwrap();
-    let absolute_dummy_commitment = commitment_gen.create_commitment(&absolute_ssu_location, &absolute_blinding);
 
     // Generate proof with panic handling
     let absolute_proof_result = std::panic::catch_unwind(|| {
@@ -339,7 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &absolute_ssu_location,
             &absolute_blinding,
             &absolute_player_location,
-            &absolute_dummy_commitment,
+            &absolute_commitment_hash,
             10.0, // 10km max distance
         )
     });
@@ -376,6 +365,18 @@ fun test_e2e_proximity_verification() {{
         proximity::init_for_testing(ctx);
     }};
 
+    // Initialize canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let vk_bytes = vector[{}]; // Canonical verifying key (328 bytes)
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
+    }};
+
     // Create commitment (Poseidon hash - 32 bytes)
     scenario.next_tx(@0x1);
     {{
@@ -393,18 +394,19 @@ fun test_e2e_proximity_verification() {{
     scenario.next_tx(@0x2);
     {{
         let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
-        let vk_bytes = vector[{}];
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
         let proof_bytes = vector[{}];
         let public_inputs = vector[{}]; // [commitment_hash, max_distance_squared] (64 bytes total)
         
         let ctx = test_scenario::ctx(&mut scenario);
-        proximity::verify_proximity_proof(&mut commitment, vk_bytes, proof_bytes, public_inputs, ctx);
+        proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
         
         // Verify nonce was incremented
         let nonce = proximity::get_nonce(&commitment);
         assert!(nonce == 1, 0);
         
         test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
     }};
 
     test_scenario::end(scenario);
@@ -419,6 +421,18 @@ fun test_corrupted_proof_fails() {{
     {{
         let ctx = test_scenario::ctx(&mut scenario);
         proximity::init_for_testing(ctx);
+    }};
+
+    // Initialize canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let vk_bytes = vector[{}];
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
     }};
 
     // Create commitment
@@ -438,22 +452,23 @@ fun test_corrupted_proof_fails() {{
     scenario.next_tx(@0x2);
     {{
         let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
-        let vk_bytes = vector[{}];
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
         let proof_bytes = vector[{}]; // Corrupted proof bytes
         let public_inputs = vector[{}];
         
         let ctx = test_scenario::ctx(&mut scenario);
         // This should fail because the proof is corrupted
-        proximity::verify_proximity_proof(&mut commitment, vk_bytes, proof_bytes, public_inputs, ctx);
+        proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
         
         test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
     }};
 
     test_scenario::end(scenario);
 }}
 
 #[test]
-#[expected_failure]
+#[expected_failure(abort_code = 4)]
 fun test_wrong_verification_key_fails() {{
     use sui::test_scenario;
 
@@ -461,6 +476,18 @@ fun test_wrong_verification_key_fails() {{
     {{
         let ctx = test_scenario::ctx(&mut scenario);
         proximity::init_for_testing(ctx);
+    }};
+
+    // Initialize WRONG canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let wrong_vk_bytes = vector[{}]; // Wrong VK bytes (from different trusted setup)
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, wrong_vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
     }};
 
     // Create commitment
@@ -476,19 +503,20 @@ fun test_wrong_verification_key_fails() {{
         test_scenario::return_to_sender(&scenario, server_cap);
     }};
 
-    // Try to verify with wrong verification key - should fail
+    // Try to verify with proof generated for different VK - should fail
     scenario.next_tx(@0x2);
     {{
         let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
-        let vk_bytes = vector[{}]; // Wrong VK bytes
-        let proof_bytes = vector[{}];
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
+        let proof_bytes = vector[{}]; // Proof generated with correct VK
         let public_inputs = vector[{}];
         
         let ctx = test_scenario::ctx(&mut scenario);
-        // This should fail because the VK doesn't match the proof
-        proximity::verify_proximity_proof(&mut commitment, vk_bytes, proof_bytes, public_inputs, ctx);
+        // This should fail because the proof was generated with a different VK
+        proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
         
         test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
     }};
 
     test_scenario::end(scenario);
@@ -503,6 +531,18 @@ fun test_wrong_public_inputs_fails() {{
     {{
         let ctx = test_scenario::ctx(&mut scenario);
         proximity::init_for_testing(ctx);
+    }};
+
+    // Initialize canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let vk_bytes = vector[{}];
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
     }};
 
     // Create commitment
@@ -522,15 +562,16 @@ fun test_wrong_public_inputs_fails() {{
     scenario.next_tx(@0x2);
     {{
         let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
-        let vk_bytes = vector[{}];
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
         let proof_bytes = vector[{}];
         let public_inputs = vector[{}]; // Wrong public inputs
         
         let ctx = test_scenario::ctx(&mut scenario);
         // This should fail because the public inputs don't match the proof
-        proximity::verify_proximity_proof(&mut commitment, vk_bytes, proof_bytes, public_inputs, ctx);
+        proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
         
         test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
     }};
 
     test_scenario::end(scenario);
@@ -544,6 +585,18 @@ fun test_user_within_10km_succeeds() {{
     {{
         let ctx = test_scenario::ctx(&mut scenario);
         proximity::init_for_testing(ctx);
+    }};
+
+    // Initialize canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let vk_bytes = vector[{}];
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
     }};
 
     // Create commitment with different coordinates
@@ -563,18 +616,19 @@ fun test_user_within_10km_succeeds() {{
     scenario.next_tx(@0x3);
     {{
         let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
-        let vk_bytes = vector[{}];
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
         let proof_bytes = vector[{}];
         let public_inputs = vector[{}];
         
         let ctx = test_scenario::ctx(&mut scenario);
-        proximity::verify_proximity_proof(&mut commitment, vk_bytes, proof_bytes, public_inputs, ctx);
+        proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
         
         // Verify nonce was incremented
         let nonce = proximity::get_nonce(&commitment);
         assert!(nonce == 1, 0);
         
         test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
     }};
 
     test_scenario::end(scenario);
@@ -589,6 +643,18 @@ fun test_invalid_invesed_sign_value_coordinates_fails() {{
     {{
         let ctx = test_scenario::ctx(&mut scenario);
         proximity::init_for_testing(ctx);
+    }};
+
+    // Initialize canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let vk_bytes = vector[{}];
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
     }};
 
     // Create commitment with absolute value coordinates
@@ -608,54 +674,75 @@ fun test_invalid_invesed_sign_value_coordinates_fails() {{
     scenario.next_tx(@0x4);
     {{
         let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
-        let vk_bytes = vector[{}];
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
         let proof_bytes = vector[{}];
         let public_inputs = vector[{}];
         
         let ctx = test_scenario::ctx(&mut scenario);
-        proximity::verify_proximity_proof(&mut commitment, vk_bytes, proof_bytes, public_inputs, ctx);
+        proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
         
         // Verify nonce was incremented
         let nonce = proximity::get_nonce(&commitment);
         assert!(nonce == 1, 0);
         
         test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
     }};
 
     test_scenario::end(scenario);
 }}
 "#,
-        // Format commitment_bytes (now 64 bytes: x and y coordinates)
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Format vk_bytes
+        // Test 1: test_e2e_proximity_verification
+        // Init VK
         vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Format proof_bytes
+        // Create commitment
+        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Verify proof
         proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Format public_inputs
         public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Corrupted proof test
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        
+        // Test 2: test_corrupted_proof_fails
+        // Init VK
         vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Create commitment
+        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Verify with corrupted proof
         corrupted_proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         corrupted_public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Wrong VK test
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        
+        // Test 3: test_wrong_verification_key_fails
+        // Init WRONG VK
         wrong_vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Create commitment
+        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Verify with proof from different VK
         proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Wrong public inputs test
-        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        
+        // Test 4: test_wrong_public_inputs_fails
+        // Init VK
         vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Create commitment
+        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Verify with wrong public inputs
         proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         wrong_public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Additional validation test - different commitment (64 bytes)
-        commitment_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        
+        // Test 5: test_user_within_10km_succeeds
+        // Init VK
         vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Create commitment with different coords
+        commitment_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Verify proof
         proof_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         public_inputs_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
-        // Absolute value coordinates test - absolute commitment (64 bytes)
-        absolute_commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        
+        // Test 6: test_invalid_invesed_sign_value_coordinates_fails
+        // Init VK
         vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Create commitment with absolute value coords
+        absolute_commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Verify proof
         absolute_proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         absolute_public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
     );

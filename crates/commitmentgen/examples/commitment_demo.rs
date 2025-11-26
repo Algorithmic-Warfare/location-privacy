@@ -1,14 +1,12 @@
-use commitmentgen::{LocationCommitmentGenerator, PedersenParams, Coordinates};
-use ark_bn254::Fr;
+use commitmentgen::{generate_blinding, create_poseidon_commitment, get_poseidon_config, coord_to_fr, Coordinates};
+use ark_serialize::CanonicalSerialize;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Location Commitment Generation Demo");
     println!("=====================================");
 
-    // Setup Pedersen parameters (in production, use independent generators)
-    let params = PedersenParams::new();
-
-    let commitment_gen = LocationCommitmentGenerator::new(params);
+    // Setup Poseidon configuration
+    let poseidon_config = get_poseidon_config();
 
     // Example coordinates: Seattle, WA (47.6062°N, -122.3321°W)
     // Converted to millimeters for precision
@@ -22,24 +20,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Coordinates: ({}, {}, {})", seattle_coords.x, seattle_coords.y, seattle_coords.z);
 
     // Generate blinding factor
-    let blinding = LocationCommitmentGenerator::generate_blinding();
+    let blinding = generate_blinding();
     println!("Generated blinding factor");
 
-    // Create commitment
-    let commitment = commitment_gen.create_commitment(&seattle_coords, &blinding);
-    println!("Created Pedersen commitment");
+    // Create Poseidon commitment
+    let commitment = create_poseidon_commitment(
+        coord_to_fr(seattle_coords.x),
+        coord_to_fr(seattle_coords.y),
+        coord_to_fr(seattle_coords.z),
+        blinding,
+        &poseidon_config,
+    );
+    println!("Created Poseidon commitment");
 
     // Serialize for on-chain storage
-    let commitment_bytes = LocationCommitmentGenerator::serialize_commitment(&commitment);
+    let mut commitment_bytes = Vec::new();
+    commitment.serialize_compressed(&mut commitment_bytes)?;
     println!("Serialized commitment: {} bytes", commitment_bytes.len());
 
     // Display first few bytes for verification
     println!("Commitment bytes (first 32): {:?}", &commitment_bytes[..32.min(commitment_bytes.len())]);
 
     // Demonstrate that different blinding factors create different commitments
-    let blinding2 = LocationCommitmentGenerator::generate_blinding();
-    let commitment2 = commitment_gen.create_commitment(&seattle_coords, &blinding2);
-    let commitment_bytes2 = LocationCommitmentGenerator::serialize_commitment(&commitment2);
+    let blinding2 = generate_blinding();
+    let commitment2 = create_poseidon_commitment(
+        coord_to_fr(seattle_coords.x),
+        coord_to_fr(seattle_coords.y),
+        coord_to_fr(seattle_coords.z),
+        blinding2,
+        &poseidon_config,
+    );
+    let mut commitment_bytes2 = Vec::new();
+    commitment2.serialize_compressed(&mut commitment_bytes2)?;
 
     println!("\nSame coordinates, different blinding:");
     println!("Commitment 1: {:?}", &commitment_bytes[..16]);
@@ -48,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nCommitment generation demo completed!");
     println!("\nIn production:");
-    println!("1. Use cryptographically secure independent generators");
+    println!("1. Use Poseidon hash for efficient commitment generation");
     println!("2. Store blinding factors securely (never reveal them)");
     println!("3. Publish commitment_bytes on-chain");
 
