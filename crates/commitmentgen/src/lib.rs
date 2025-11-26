@@ -177,11 +177,7 @@ impl ConstraintSynthesizer<Fr> for ProximityCircuit {
     }
 }
 
-// TODO: Implement Pedersen commitment verification in R1CS
-// This is a complex task that requires proper G1 arithmetic in the circuit
-// fn compute_pedersen_commitment(...) -> ...
-
-/// Proof generator
+// Proof generator
 pub struct ProximityProver {
     proving_key: ProvingKey<Bn254>,
     verifying_key: VerifyingKey<Bn254>,
