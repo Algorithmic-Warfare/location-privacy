@@ -33,13 +33,13 @@ let params = PedersenParams {
 
 let commitment_gen = LocationCommitmentGenerator::new(params);
 
-// Create a commitment to coordinates
-let coords = Coordinates { x: 47608013, y: -122335167, z: 0 };
+// Create a commitment to coordinates (supports negative values)
+let coords = Coordinates { x: -23534879266777860000i128, y: -435314932817330200i128, z: -4336253132989268000i128 };
 let blinding = LocationCommitmentGenerator::generate_blinding();
 let commitment = commitment_gen.create_commitment(&coords, &blinding);
 
 // Serialize for on-chain storage
-let commitment_bytes = LocationCommitmentGenerator::serialize_commitment(&commitment);
+let commitment_bytes = LocationCommitmentGenerator::serialize_commitment_coordinates(&commitment);
 ```
 
 ### Trusted Setup Ceremony
@@ -151,7 +151,7 @@ cargo run --example commitment_demo
 cargo run --example trusted_setup_example
 
 # End-to-end test data generation
-cargo run --example e2e_test
+cargo run --example e2e_test_setup
 ```
 
 ## Security Notes

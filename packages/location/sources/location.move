@@ -5,10 +5,11 @@
 
 module location_addr::proximity {
 
-    /// Represents a committed location with Pedersen commitment
+    /// Represents a committed location with Poseidon hash commitment
     public struct LocationCommitment has key, store {
         id: UID,
-        /// Pedersen commitment bytes (32 bytes for curve point)
+        /// Poseidon hash commitment (32 bytes: single field element)
+        /// C = Poseidon(x, y, z, blinding_factor)
         commitment: vector<u8>,
         /// Nonce counter to prevent replay attacks
         nonce: u64,
@@ -26,7 +27,7 @@ module location_addr::proximity {
     /// Stores the Groth16 verifying key for proof verification
     public struct VerifyingKey has key, store {
         id: UID,
-        /// Compressed verifying key bytes (296 bytes for BN254)
+        /// Compressed verifying key bytes (328 bytes for BN254 with 2 public inputs)
         key_bytes: vector<u8>,
         /// Version/timestamp for key rotation support
         version: u64,
@@ -60,7 +61,7 @@ module location_addr::proximity {
         key_bytes: vector<u8>,
         ctx: &mut TxContext
     ) {
-        assert!(vector::length(&key_bytes) == 296, 6); // BN254 verifying key is 296 bytes
+        assert!(vector::length(&key_bytes) == 328, 6); // BN254 verifying key is 328 bytes (2 public inputs)
         
         let verifying_key = VerifyingKey {
             id: object::new(ctx),
@@ -78,7 +79,7 @@ module location_addr::proximity {
         owner: address,
         ctx: &mut TxContext
     ) {
-        // Validate commitment format (must be 32 bytes for compressed Fr field element)
+        // Validate commitment format (must be 32 bytes for Poseidon hash)
         assert!(vector::length(&commitment_bytes) == 32, 1);
         
         let commitment = LocationCommitment {
@@ -106,13 +107,13 @@ module location_addr::proximity {
     ///
     /// Current implementation validates:
     /// - Proof format and cryptographic validity
-    /// - Public inputs format (32 bytes containing commitment)
-    /// - Verifying key format (296 bytes)
+    /// - Public inputs format (64 bytes: commitment_hash + max_distance_squared)
+    /// - Verifying key format (264 bytes for 2 public inputs)
     ///
     /// The zkSNARK circuit verifies:
-    /// - Pedersen commitment opening: C = g*x + h*y + k*z + m*r
+    /// - Poseidon commitment opening: C = Poseidon(x, y, z, blinding_factor)
     /// - Euclidean distance constraint: (x_p - x_t)² + (y_p - y_t)² + (z_p - z_t)² < max_distance²
-    /// - Nonce matching for replay protection
+    /// - Commitment hash matches the public input
     public fun verify_proximity_proof(
         commitment: &mut LocationCommitment,
         verifying_key_bytes: vector<u8>,
@@ -122,13 +123,13 @@ module location_addr::proximity {
     ) {
         // Validate input sizes
         assert!(vector::length(&proof_bytes) >= 128, 2); // Groth16 proof is ~128 bytes
-        assert!(vector::length(&public_inputs) == 32, 3); // Public inputs contain commitment (32 bytes)
-        assert!(vector::length(&verifying_key_bytes) == 296, 5); // BN254 verifying key is exactly 296 bytes
+        assert!(vector::length(&public_inputs) == 64, 3); // Public inputs: commitment_hash (32), max_distance_squared (32)
+        assert!(vector::length(&verifying_key_bytes) == 328, 5); // BN254 verifying key is exactly 328 bytes (2 public inputs)
 
         // Verify the Groth16 proof cryptographically
         let valid = verify_groth16_proof_bn254(
+            commitment,
             &verifying_key_bytes,
-            &commitment.commitment,
             &proof_bytes,
             &public_inputs
         );
@@ -162,31 +163,28 @@ module location_addr::proximity {
     
     /// Verify Groth16 proof using BN254 curve
     /// This implements the proper Sui groth16 verification using stored verifying key
-    /// Validates that the public inputs contain the correct commitment
+    /// Validates that the public inputs contain the correct Poseidon commitment hash
     fun verify_groth16_proof_bn254(
+        commitment: &LocationCommitment,
         verifying_key_bytes: &vector<u8>,
-        expected_commitment: &vector<u8>,
         proof_bytes: &vector<u8>,
         public_inputs: &vector<u8>
     ): bool {
         use sui::groth16::{Self, bn254};
 
-        // Validate that public inputs contain commitment (32 bytes)
-        assert!(vector::length(public_inputs) == 32, 7);
+        // Validate that public inputs are 64 bytes (commitment_hash + max_distance_squared)
+        assert!(vector::length(public_inputs) == 64, 7);
 
-        // Verify that the public inputs match the stored commitment
+        // Verify that the first 32 bytes of public inputs match the stored Poseidon commitment hash
         let mut i = 0;
         while (i < 32) {
-            assert!(vector::borrow(public_inputs, i) == vector::borrow(expected_commitment, i), 8);
+            assert!(*vector::borrow(public_inputs, i) == *vector::borrow(&commitment.commitment, i), 8);
             i = i + 1;
         };
 
         // Prepare the verifying key
         let pvk = groth16::prepare_verifying_key(&bn254(), verifying_key_bytes);
-
         let public_proof_inputs = groth16::public_proof_inputs_from_bytes(*public_inputs);
-
-        // Create proof points from proof bytes
         let proof_points = groth16::proof_points_from_bytes(*proof_bytes);
 
         // Verify the proof

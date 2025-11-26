@@ -440,3 +440,70 @@ sui::transfer   # Object transfers
 **Zero-Knowledge:** Proof reveals nothing beyond truth of statement
 
 **zkSNARK:** Zero-Knowledge Succinct Non-Interactive Argument of Knowledge
+
+## Pending Implementation Tasks
+
+The following tasks remain to be completed for the Rust server-side proof and commitment generation components, as well as verification steps. These are prioritized based on cryptographic security and correctness requirements.
+
+### Proof and Commitment Generation
+
+1. **Implement G1Point Pedersen Commitment Generation**
+   - Replace scalar-only "commitment" with proper curve-point Pedersen commitment
+   - Deliverable: `create_commitment` returns `G1Projective`/`G1Affine` point `C = x*G + y*H + z*K + r*M`
+   - Tasks: Derive generators `G,H,K,M` using hash-to-curve with domain separation, use proper arkworks APIs, serialize compressed for on-chain storage
+   - Verification: Unit tests for serialization/deserialization and deterministic generation
+
+2. **Generate Hash-to-Curve Basepoints**
+   - Create distinct generators `G,H,K,M` for coordinate blinding
+   - Ensure no reused generator values to maintain security properties
+   - Verification: Domain separation and uniqueness checks
+
+3. **Update Serialization for On-Chain Storage**
+   - Replace Fr field element serialization with G1 compressed point serialization
+   - Ensure 32-byte commitment format for blockchain storage
+   - Verification: On-chain deserialization compatibility
+
+4. **Add Fixed-Point Coordinate Representation**
+   - Implement stable integer mapping (e.g., millimeters) with enforced ranges `[MIN,MAX]`
+   - Add range checks in circuit to prevent field wrap-around
+   - Verification: Tests rejecting coordinates near field modulus
+
+5. **Implement Robust Distance Check Gadget**
+   - Use fixed bit-length decomposition for `distance_squared ≤ R^2` constraint
+   - Choose `n_bits` such that `2^n_bits > max_possible_distance_squared`
+   - Decompose `diff = max - dist_sq` and ensure boolean bits
+   - Verification: Boundary distance tests (exactly R, R±1)
+
+6. **Add Nonce Public Input to Proofs**
+   - Include contract-provided nonce in every proof's public inputs
+   - Wire on-chain API to provide current nonce
+   - Verification: Proofs for old nonces fail verification
+
+### Rust Verification Steps
+
+7. **Add Unit and Fuzz Tests**
+   - Unit tests for commitment correctness and circuit constraints
+   - Fuzz/property testing using arkworks harness or proptest
+   - Verification: Randomized valid/invalid witness testing
+
+8. **Simulate Offline Brute-Force Attack**
+   - Test harness attempting to recover `(x,r)` from known `C` with enumerated candidates
+   - Use realistic curve-based Pedersen and 256-bit blinding
+   - Verification: Empirical evidence of infeasibility within practical compute constraints
+
+### Additional Operational Tasks
+
+9. **Build On-Chain Verifier and Gas Testing**
+   - Implement verifier contract accepting proof + public inputs
+   - Measure gas costs on testnet for verification calls
+   - Verification: Acceptable UX costs without DoS vulnerability
+
+10. **Draft Key Rotation and Compromise Runbook**
+    - Create operational procedures for key compromise scenarios
+    - Include rollback, revocation, and user notification steps
+    - Verification: Tabletop exercises with dev/ops teams
+
+11. **Commission Third-Party Security Audit**
+    - Audit commitment implementation, circuit correctness, on-chain verifier, and key management
+    - Prepare threat model and test corpora for auditors
+    - Verification: Address findings and re-test

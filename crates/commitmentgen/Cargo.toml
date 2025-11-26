@@ -12,8 +12,8 @@ name = "commitment_demo"
 path = "examples/commitment_demo.rs"
 
 [[example]]
-name = "e2e_test"
-path = "examples/e2e_test.rs"
+name = "e2e_test_setup"
+path = "examples/e2e_test_setup.rs"
 
 [dependencies]
 ark-bn254 = "0.4.0"
@@ -23,9 +23,10 @@ ark-groth16 = "0.4.0"
 ark-relations = "0.4.0"
 ark-std = "0.4.0"
 ark-r1cs-std = "0.4.0"
-ark-crypto-primitives = "0.4.0"
+ark-crypto-primitives = { version = "0.4.0", features = ["r1cs", "sponge", "crh"] }
 ark-serialize = "0.4.0"
 ark-snark = "0.4.0"
 rand = "0.8.5"
+sha2 = "0.10.8"
 sha3 = "0.10.8"
 num-bigint = "0.4.4"

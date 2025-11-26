@@ -16,10 +16,10 @@ cd crates/commitmentgen
 echo "📦 Building with all features..."
 cargo build --release
 
-echo "🧪 Running all tests..."
+echo " Running all tests..."
 cargo test --release
 
-echo "📊 Running benchmarks..."
+echo " Running benchmarks..."
 cargo bench 2>/dev/null || echo " No benchmarks defined (this is normal)"
 
 echo "📚 Checking documentation..."

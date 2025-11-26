@@ -49,7 +49,7 @@ Each script provides:
 - Build status and test results
 - Example data for Move contracts
 - Integration instructions
-- 🚀 Next steps for deployment
+-  Next steps for deployment
 
 ## Security Notes
 

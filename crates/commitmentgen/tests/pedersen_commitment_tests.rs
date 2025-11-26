@@ -6,20 +6,16 @@
 #[cfg(test)]
 mod integration_tests {
     use commitmentgen::{LocationCommitmentGenerator, PedersenParams, Coordinates};
-    use ark_bn254::Fr;
+    use ark_bn254::{Fr, G1Affine};
     use ark_std::Zero;
     use ark_serialize::CanonicalDeserialize;
+    use ark_ec::AffineRepr;
 
     /// Test that demonstrates the complete Pedersen commitment workflow
     #[test]
     fn test_pedersen_commitment_workflow() {
         // Setup secure parameters (in practice, these should be generated securely)
-        let params = PedersenParams {
-            g: Fr::from(1u64),
-            h: Fr::from(2u64), // Independent generator
-            k: Fr::from(3u64), // Independent generator
-            m: Fr::from(4u64), // Independent generator for blinding
-        };
+        let params = PedersenParams::new();
 
         let commitment_gen = LocationCommitmentGenerator::new(params);
 
@@ -40,7 +36,7 @@ mod integration_tests {
         let wrong_commitment = commitment_gen.create_commitment(&ssu_location, &wrong_blinding);
         assert_ne!(commitment, wrong_commitment);
 
-        println!("✅ Pedersen commitment workflow test passed");
+        println!(" Pedersen commitment workflow test passed");
         println!("   Commitment size: {} bytes", commitment_bytes.len());
         println!("   SSU Location: ({}, {}, {}) meters", ssu_location.x, ssu_location.y, ssu_location.z);
     }
@@ -48,13 +44,7 @@ mod integration_tests {
     /// Test the binding property: different coordinates produce different commitments
     #[test]
     fn test_binding_property_comprehensive() {
-        let params = PedersenParams {
-            g: Fr::from(1u64),
-            h: Fr::from(2u64),
-            k: Fr::from(3u64),
-            m: Fr::from(4u64),
-        };
-
+        let params = PedersenParams::new();
         let commitment_gen = LocationCommitmentGenerator::new(params);
         let blinding = Fr::from(42u64);
 
@@ -76,13 +66,7 @@ mod integration_tests {
     /// C = g^x * h^y * k^z * m^r
     #[test]
     fn test_mathematical_correctness_detailed() {
-        let params = PedersenParams {
-            g: Fr::from(1u64),
-            h: Fr::from(2u64),
-            k: Fr::from(3u64),
-            m: Fr::from(4u64),
-        };
-
+        let params = PedersenParams::new();
         let commitment_gen = LocationCommitmentGenerator::new(params.clone());
         let coords = Coordinates { x: 3, y: 5, z: 7 };
         let blinding = Fr::from(11u64);
@@ -102,13 +86,7 @@ mod integration_tests {
     /// Test serialization compatibility with blockchain requirements
     #[test]
     fn test_blockchain_compatibility() {
-        let params = PedersenParams {
-            g: Fr::from(1u64),
-            h: Fr::from(2u64),
-            k: Fr::from(3u64),
-            m: Fr::from(4u64),
-        };
-
+        let params = PedersenParams::new();
         let commitment_gen = LocationCommitmentGenerator::new(params);
 
         // Test various coordinate values that might appear in practice
@@ -127,10 +105,10 @@ mod integration_tests {
             assert_eq!(serialized.len(), 32, "Commitment must serialize to exactly 32 bytes for blockchain");
 
             // Verify deserialization works
-            let deserialized = Fr::deserialize_compressed(&serialized[..]).unwrap();
+            let deserialized = G1Affine::deserialize_compressed(&serialized[..]).unwrap();
             assert_eq!(commitment, deserialized, "Serialization roundtrip must preserve commitment");
 
-            println!("✅ Test case {} passed: coords ({}, {}, {})", i + 1, coords.x, coords.y, coords.z);
+            println!(" Test case {} passed: coords ({}, {}, {})", i + 1, coords.x, coords.y, coords.z);
         }
     }
 
@@ -139,19 +117,14 @@ mod integration_tests {
     fn test_generator_independence_importance() {
         // Using the same generator for all parameters (INSECURE)
         let insecure_params = PedersenParams {
-            g: Fr::from(1u64),
-            h: Fr::from(1u64), // Same as g - INSECURE
-            k: Fr::from(1u64), // Same as g - INSECURE
-            m: Fr::from(1u64), // Same as g - INSECURE
+            g: G1Affine::generator(),
+            h: G1Affine::generator(), // Same as g - INSECURE
+            k: G1Affine::generator(), // Same as g - INSECURE
+            m: G1Affine::generator(), // Same as g - INSECURE
         };
 
         // Using independent generators (SECURE)
-        let secure_params = PedersenParams {
-            g: Fr::from(1u64),
-            h: Fr::from(2u64),
-            k: Fr::from(3u64),
-            m: Fr::from(4u64),
-        };
+        let secure_params = PedersenParams::new();
 
         let coords = Coordinates { x: 2, y: 3, z: 5 };
         let blinding = Fr::from(7u64);
@@ -166,8 +139,8 @@ mod integration_tests {
         // They will be different because the generators are different
         assert_ne!(insecure_commitment, secure_commitment);
 
-        println!("✅ Generator independence test passed");
-        println!("   ⚠️  WARNING: Using the same generator for multiple parameters reduces security");
-        println!("   ✅ RECOMMENDATION: Use independent generators generated from a trusted setup");
+        println!(" Generator independence test passed");
+        println!("WARNING: Using the same generator for multiple parameters reduces security");
+        println!("RECOMMENDATION: Use independent generators generated from a trusted setup");
     }
 }

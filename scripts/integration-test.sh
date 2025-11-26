@@ -16,7 +16,7 @@ cd crates/commitmentgen
 echo "📦 Building commitment generator..."
 cargo build >/dev/null 2>&1
 
-echo "🧪 Running unit tests..."
+echo " Running unit tests..."
 cargo test >/dev/null 2>&1
 
 echo "🏗️  Generating cryptographic data..."
@@ -30,7 +30,7 @@ echo "" >> "$OUTPUT_FILE"
 
 # Run the e2e test and extract only the Move contract data
 echo "Running end-to-end test..."
-E2E_OUTPUT=$(cargo run --example e2e_test 2>/dev/null)
+E2E_OUTPUT=$(cargo run --example e2e_test_setup 2>/dev/null)
 
 # Extract only the relevant Move contract data sections
 echo "// ===== MOVE CONTRACT TEST DATA =====" >> "$OUTPUT_FILE"
@@ -61,7 +61,7 @@ echo "// 3. Use vk_bytes, proof_bytes, and public_inputs for verify_proximity_pr
 echo "// 4. Run 'sui move test' to verify the integration works" >> "$OUTPUT_FILE"
 
 echo ""
-echo "✅ Clean data extraction completed!"
+echo " Clean data extraction completed!"
 echo "📄 Output saved to: $OUTPUT_FILE"
 echo ""
 echo "The file contains only the cryptographic data needed for Move contracts."

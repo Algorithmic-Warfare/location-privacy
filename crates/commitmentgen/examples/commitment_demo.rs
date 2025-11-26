@@ -6,21 +6,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=====================================");
 
     // Setup Pedersen parameters (in production, use independent generators)
-    let params = PedersenParams {
-        g: Fr::from(1u64),
-        h: Fr::from(2u64), // Different generator in production
-        k: Fr::from(3u64), // Different generator in production
-        m: Fr::from(4u64), // Different generator in production
-    };
+    let params = PedersenParams::new();
 
     let commitment_gen = LocationCommitmentGenerator::new(params);
 
     // Example coordinates: Seattle, WA (47.6062°N, -122.3321°W)
     // Converted to millimeters for precision
     let seattle_coords = Coordinates {
-        x: 47_606_200,  // 47.6062° * 10^4 (fixed-point)
-        y: -122_332_100, // -122.3321° * 10^4 (fixed-point)
-        z: 0,           // Sea level
+        x: 47606200i128,  // 47.6062° * 10^4 (fixed-point)
+        y: -122332100i128, // -122.3321° * 10^4 (fixed-point)
+        z: 0i128,           // Sea level
     };
 
     println!("Target Location: Seattle, WA");
