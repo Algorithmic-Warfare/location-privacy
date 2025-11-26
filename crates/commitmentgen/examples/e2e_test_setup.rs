@@ -636,7 +636,7 @@ fun test_user_within_10km_succeeds() {{
 
 #[test]
 #[expected_failure]
-fun test_invalid_invesed_sign_value_coordinates_fails() {{
+fun test_invalid_inversed_sign_value_coordinates_fails() {{
     use sui::test_scenario;
 
     let mut scenario = test_scenario::begin(@0x1);
@@ -682,6 +682,144 @@ fun test_invalid_invesed_sign_value_coordinates_fails() {{
         proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
         
         // Verify nonce was incremented
+        let nonce = proximity::get_nonce(&commitment);
+        assert!(nonce == 1, 0);
+        
+        test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
+    }};
+
+    test_scenario::end(scenario);
+}}
+
+// ============================================================================
+// COMMITMENT BINDING TESTS
+// Security tests to prevent proof reuse attacks across different commitments
+// ============================================================================
+
+#[test]
+#[expected_failure(abort_code = 8, location = location_addr::proximity)]
+fun test_commitment_hash_mismatch_fails() {{
+    use sui::test_scenario;
+
+    let mut scenario = test_scenario::begin(@0x1);
+    {{
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_for_testing(ctx);
+    }};
+
+    // Initialize canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let vk_bytes = vector[{}];
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
+    }};
+
+    // Create commitment with SSU_B hash
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let commitment_b_bytes = vector[{}]; // SSU_B commitment hash
+        let owner = @0x2;
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::create_commitment(&server_cap, commitment_b_bytes, owner, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
+    }};
+
+    // SECURITY TEST: Attempt to use proof with WRONG commitment hash in public inputs
+    // This simulates an attacker trying to "reuse" a valid proof with a different commitment
+    scenario.next_tx(@0x2);
+    {{
+        let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        
+        // ATTACK SCENARIO:
+        // - The stored commitment has SSU_B's hash
+        // - We provide public inputs with SSU_A's hash
+        // - The proof is cryptographically valid but for the WRONG commitment
+        //
+        // EXPECTED RESULT: FAIL with error code 8
+        // The verify_commitment_binding() function will compare:
+        //   public_inputs[0..32] (SSU_A hash) != commitment.commitment (SSU_B hash)
+        // And abort with error code 8: "commitment hash mismatch - proof not for this location"
+        
+        let proof_for_ssu_a = vector[{}]; // Valid proof for SSU_A
+        let public_inputs_for_ssu_a = vector[{}]; // Public inputs containing SSU_A's hash (WRONG!)
+        
+        proximity::verify_proximity_proof(
+            &mut commitment,  // Commitment object with SSU_B's hash
+            &verifying_key, 
+            proof_for_ssu_a,  // Proof (doesn't matter - fails before cryptographic check)
+            public_inputs_for_ssu_a,  // Public inputs containing SSU_A's hash (WRONG!)
+            ctx
+        );
+        
+        // This line should never be reached
+        test_scenario::return_shared(commitment);
+        test_scenario::return_shared(verifying_key);
+    }};
+
+    test_scenario::end(scenario);
+}}
+
+#[test]
+fun test_proof_works_with_correct_commitment() {{
+    use sui::test_scenario;
+
+    let mut scenario = test_scenario::begin(@0x1);
+    {{
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_for_testing(ctx);
+    }};
+
+    // Initialize canonical verifying key
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let vk_bytes = vector[{}];
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::init_verifying_key(&server_cap, vk_bytes, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
+    }};
+
+    // Create commitment with SSU_A hash
+    scenario.next_tx(@0x1);
+    {{
+        let server_cap = test_scenario::take_from_sender<proximity::ServerCap>(&scenario);
+        let commitment_bytes = vector[{}]; // SSU_A commitment hash
+        let owner = @0x2;
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        proximity::create_commitment(&server_cap, commitment_bytes, owner, ctx);
+        
+        test_scenario::return_to_sender(&scenario, server_cap);
+    }};
+
+    // Verify proof with CORRECT matching commitment - should succeed
+    scenario.next_tx(@0x2);
+    {{
+        let mut commitment = test_scenario::take_shared<proximity::LocationCommitment>(&scenario);
+        let verifying_key = test_scenario::take_shared<proximity::VerifyingKey>(&scenario);
+        let proof_bytes = vector[{}]; // Valid proof for SSU_A
+        let public_inputs = vector[{}]; // Public inputs with SSU_A hash (CORRECT!)
+        
+        let ctx = test_scenario::ctx(&mut scenario);
+        
+        // This should SUCCEED because commitment hash in public inputs matches commitment object
+        proximity::verify_proximity_proof(&mut commitment, &verifying_key, proof_bytes, public_inputs, ctx);
+        
+        // Verify nonce was incremented (proof succeeded)
         let nonce = proximity::get_nonce(&commitment);
         assert!(nonce == 1, 0);
         
@@ -737,7 +875,7 @@ fun test_invalid_invesed_sign_value_coordinates_fails() {{
         proof_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         public_inputs_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         
-        // Test 6: test_invalid_invesed_sign_value_coordinates_fails
+        // Test 6: test_invalid_inversed_sign_value_coordinates_fails
         // Init VK
         vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         // Create commitment with absolute value coords
@@ -745,6 +883,26 @@ fun test_invalid_invesed_sign_value_coordinates_fails() {{
         // Verify proof
         absolute_proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
         absolute_public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        
+        // Test 7: test_commitment_hash_mismatch_fails
+        // Init VK
+        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Create commitment with SSU_B hash
+        commitment_bytes_2.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Proof for SSU_A
+        proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Public inputs for SSU_A (wrong for commitment B)
+        public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        
+        // Test 8: test_proof_works_with_correct_commitment
+        // Init VK
+        vk_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Create commitment with SSU_A hash
+        commitment_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Proof for SSU_A
+        proof_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
+        // Public inputs for SSU_A (correct!)
+        public_inputs_bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", "),
     );
 
     // Write the test to a file in the workspace

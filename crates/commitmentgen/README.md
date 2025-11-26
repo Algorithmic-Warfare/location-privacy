@@ -334,11 +334,11 @@ The `e2e_test_setup` example generates a complete test suite including:
 
 ### Attack Resistance
 
-- ✅ **Offline Brute-Force**: Blocked by 254-bit blinding factors
-- ✅ **Proof Replay**: Blocked by on-chain nonce increment
-- ✅ **Coordinate Guessing**: Cryptographically infeasible (Poseidon preimage resistance)
-- ✅ **Adversarial Proofs**: Blocked by canonical verifying key requirement
-- ✅ **Commitment Forgery**: Prevented by Poseidon collision resistance
+- **Offline Brute-Force**: Blocked by 254-bit blinding factors
+- **Proof Replay**: Blocked by on-chain nonce increment
+- **Coordinate Guessing**: Cryptographically infeasible (Poseidon preimage resistance)
+- **Adversarial Proofs**: Blocked by canonical verifying key requirement
+- **Commitment Forgery**: Prevented by Poseidon collision resistance
 
 ## Performance Characteristics
 
@@ -394,17 +394,17 @@ The proximity proof cryptographically demonstrates:
 
 ### What is NOT Revealed
 
-- ❌ Target coordinates `(x_t, y_t, z_t)` remain hidden
-- ❌ Player coordinates `(x_p, y_p, z_p)` remain hidden
-- ❌ Blinding factor `r` remains hidden
-- ❌ Actual distance between coordinates remains hidden
+- Target coordinates `(x_t, y_t, z_t)` remain hidden
+- Player coordinates `(x_p, y_p, z_p)` remain hidden
+- Blinding factor `r` remains hidden
+- Actual distance between coordinates remains hidden
 
 ### What is Publicly Visible
 
-- ✅ Commitment hash `C` (32 bytes) - reveals nothing about coordinates due to blinding
-- ✅ Maximum distance constraint (e.g., 10km)
-- ✅ Fact that player is within the specified distance
-- ✅ Nonce value (for replay protection)
+- Commitment hash `C` (32 bytes) - reveals nothing about coordinates due to blinding
+- Maximum distance constraint (e.g., 10km)
+- Fact that player is within the specified distance
+- Nonce value (for replay protection)
 
 ## Troubleshooting
 

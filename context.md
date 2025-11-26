@@ -69,15 +69,17 @@ LocationCommitment {
 
 **Key Functions:**
 - `create_commitment()`: Publishes a new location commitment (server-only)
-- `verify_proximity_proof()`: Verifies zkSNARK proof and increments nonce
+- `verify_proximity_proof()`: Verifies zkSNARK proof, validates commitment binding, and increments nonce
 - Native Groth16 verification for cryptographic proof checking
 
 **Security Features:**
+- **Commitment Binding**: Proof must match the specific `LocationCommitment` object's hash - prevents proof reuse across different commitments
 - ServerCap capability ensures only authorized server can create commitments
 - Nonce increment prevents proof replay
 - Public input validation ensures commitment hash and max_distance_squared are correct
 - Native Groth16 verifier for cryptographic proof checking
 - 32-byte commitment storage (single field element)
+- Prevents "proof shopping" attacks (trying one proof against multiple commitments)
 
 ### 2. Rust Server-Side Proof Generator
 
@@ -155,11 +157,11 @@ Altitude 0m → 0
    - Returns serialized proof (~256 bytes) and public inputs (~64 bytes)
 
 3. **On-Chain Verification:**
-   - Player submits proof to contract via `verify_proximity_proof()`
+   - Player submits proof to contract via `verify_proximity_proof()` with reference to specific `LocationCommitment`
    - Contract validates:
+     - **CRITICAL**: Commitment hash in public inputs matches the stored commitment (binds proof to this specific location)
      - Proof structure (~256 bytes)
      - Public inputs structure (64 bytes: commitment_hash + max_distance_squared)
-     - Commitment hash in public inputs matches stored commitment
      - Nonce matches current contract nonce (increments after verification)
    - Contract calls native Groth16 verifier
    - If valid: increments nonce, emits event, grants access
@@ -173,8 +175,9 @@ Altitude 0m → 0
 2. **Soundness:** Cannot forge proof for coordinates outside 10km radius (computational soundness)
 3. **Completeness:** Valid proximity always produces valid proof
 4. **Binding:** Cannot change coordinates after commitment published (collision resistance)
-5. **Hiding:** Commitment reveals nothing about coordinates without blinding factor (254-bit security)
-6. **Efficiency:** Poseidon hash requires ~150-200 constraints vs ~200-400 for elliptic curve operations
+5. **Location Binding:** Proof cryptographically bound to specific pre-published commitment - cannot be reused with different commitments
+6. **Hiding:** Commitment reveals nothing about coordinates without blinding factor (254-bit security)
+7. **Efficiency:** Poseidon hash requires ~150-200 constraints vs ~200-400 for elliptic curve operations
 
 ### Attack Resistance
 
@@ -186,6 +189,16 @@ Altitude 0m → 0
 **Proof Replay:** ✓ Blocked
 - Nonce increments after each verification
 - Old proofs fail nonce check
+
+**Proof Reuse Across Commitments:** ✓ Blocked
+- Commitment binding validation ensures proof matches specific LocationCommitment object
+- Cannot use proof for SSU_A's location with SSU_B's commitment
+- Prevents "proof shopping" attacks
+
+**Arbitrary Location Proofs:** ✓ Blocked
+- Server must generate proof for coordinates matching a pre-published commitment
+- Cannot generate ad-hoc proximity proofs without corresponding on-chain commitment
+- Ensures all verified proximities are to legitimate, pre-registered locations
 
 **Proof Pre-Computation:** ✓ Blocked
 - Proofs tied to specific nonce
@@ -459,28 +472,28 @@ The following tasks have been completed with the migration to Poseidon hash comm
 
 ### Completed: Proof and Commitment Generation
 
-1. **✅ Implement Poseidon Hash Commitment Generation**
+1. **Implement Poseidon Hash Commitment Generation**
    - Completed: `create_poseidon_commitment()` returns field element `C = Poseidon(x, y, z, r)`
    - Uses BN254-optimized Poseidon configuration
    - Serializes to 32-byte field element for on-chain storage
    - Verification: 27 unit tests passing with comprehensive coverage
 
-2. **✅ Poseidon Configuration**
+2. **Poseidon Configuration**
    - Uses arkworks Poseidon implementation optimized for BN254
    - Configured for efficient constraint system (~150-200 constraints)
    - Domain separation through Poseidon parameters
 
-3. **✅ Update Serialization for On-Chain Storage**
+3. **Update Serialization for On-Chain Storage**
    - Serializes field element commitments to 32 bytes
    - Ensures blockchain compatibility and efficient storage
    - Verification: Serialization roundtrip tests passing
 
-4. **✅ Add Fixed-Point Coordinate Representation**
+4. **Add Fixed-Point Coordinate Representation**
    - Implemented i128 integer representation with modular arithmetic
    - Support for negative coordinates using field arithmetic
    - Verification: Tests passing for negative coordinates and large values
 
-5. **✅ Implement Robust Distance Check Gadget**
+5. **Implement Robust Distance Check Gadget**
    - Distance constraint implemented in ProximityCircuit
    - Euclidean distance calculation with squared distance comparison
    - Verification: Boundary tests passing (within/outside distance limits)
@@ -492,13 +505,13 @@ The following tasks have been completed with the migration to Poseidon hash comm
 
 ### Completed: Rust Verification Steps
 
-7. **✅ Add Unit and Fuzz Tests**
+7. **Add Unit and Fuzz Tests**
    - 27 comprehensive unit tests passing
    - Tests cover: commitment properties, circuit constraints, coordinate handling, serialization
    - Property testing for blinding factor randomness and statistical properties
    - Verification: All randomized valid/invalid witness testing passing
 
-8. **✅ Offline Attack Resistance**
+8. **Offline Attack Resistance**
    - Theoretical analysis: 2^254 computational complexity with Poseidon hash
    - 254-bit blinding factor provides collision resistance
    - Security tests validate commitment hiding and binding properties
@@ -506,7 +519,7 @@ The following tasks have been completed with the migration to Poseidon hash comm
 
 ### Remaining Operational Tasks
 
-9. **✅ Build On-Chain Verifier**
+9. **Build On-Chain Verifier**
    - Sui Move contract implemented with native Groth16 verification
    - ServerCap access control for commitment creation
    - Public proof verification with nonce-based replay protection
@@ -527,10 +540,10 @@ The following tasks have been completed with the migration to Poseidon hash comm
 ### System Performance Summary
 
 **Current Status:**
-- ✅ Poseidon hash commitments fully implemented
-- ✅ zkSNARK circuit with ~150-200 constraints
-- ✅ 27 unit tests passing (100% coverage for crypto primitives)
-- ✅ End-to-end Rust → Move integration working
-- ✅ On-chain verification with nonce-based replay protection
+- Poseidon hash commitments fully implemented
+- zkSNARK circuit with ~150-200 constraints
+- 27 unit tests passing (100% coverage for crypto primitives)
+- End-to-end Rust → Move integration working
+- On-chain verification with nonce-based replay protection
 - ⚠️ Production deployment procedures pending
 - ⚠️ Security audit pending

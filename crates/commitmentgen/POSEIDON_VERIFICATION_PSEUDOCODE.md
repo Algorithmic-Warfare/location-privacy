@@ -14,11 +14,11 @@ commitment_z.enforce_equal(&z_t)?;
 ### Why Poseidon Over Elliptic Curve?
 
 **Poseidon hash-based commitments provide:**
-- ✅ **Much faster**: ~150-200 constraints vs ~1000+ for EC
-- ✅ **Cryptographically secure**: Collision-resistant hash function
-- ✅ **Zero-knowledge**: Hides coordinates with blinding factor
-- ✅ **Simpler implementation**: No complex curve arithmetic
-- ✅ **Practical performance**: 2-3 second proofs vs 5-10 seconds
+- **Much faster**: ~150-200 constraints vs ~1000+ for EC
+- **Cryptographically secure**: Collision-resistant hash function
+- **Zero-knowledge**: Hides coordinates with blinding factor
+- **Simpler implementation**: No complex curve arithmetic
+- **Practical performance**: 2-3 second proofs vs 5-10 seconds
 
 **Trade-off:**
 - Different security model: Hash-based vs algebraic (EC)
@@ -186,29 +186,29 @@ Compare to alternatives:
 ### Security Comparison
 
 **Current Simplified Implementation:**
-- ✅ Fast: 3 constraints
-- ✅ Simple: Easy to understand
-- ❌ No hiding: Commitment reveals coordinates
-- ❌ No binding: Can forge commitments
-- ❌ Not zero-knowledge: Coordinates visible
+- Fast: 3 constraints
+- Simple: Easy to understand
+- No hiding: Commitment reveals coordinates
+- No binding: Can forge commitments
+- Not zero-knowledge: Coordinates visible
 - ⚠️ **Security: NONE - Demo only**
 
 **Poseidon Hash Implementation (RECOMMENDED):**
-- ✅ Fast: ~150-200 constraints (50x slower than simplified, but acceptable)
-- ✅ Cryptographically secure: Collision-resistant
-- ✅ Hiding property: Random blinding factor hides coordinates
-- ✅ Binding property: Cannot change coordinates without changing hash
-- ✅ Zero-knowledge: Coordinates hidden in hash
-- ✅ Practical: 2-3 second proof generation
-- ✅ **Security: Production-ready (128-bit)**
+- Fast: ~150-200 constraints (50x slower than simplified, but acceptable)
+- Cryptographically secure: Collision-resistant
+- Hiding property: Random blinding factor hides coordinates
+- Binding property: Cannot change coordinates without changing hash
+- Zero-knowledge: Coordinates hidden in hash
+- Practical: 2-3 second proof generation
+- **Security: Production-ready (128-bit)**
 
 **Elliptic Curve Implementation:**
-- ❌ Slow: ~1000-1300 constraints (300x slower than simplified)
-- ✅ Cryptographically secure: DLP-based
-- ✅ Hiding property: Algebraic security
-- ✅ Binding property: Strong algebraic guarantees
-- ✅ Zero-knowledge: Full ZK property
-- ❌ Impractical: 5-10 second proof generation
+- Slow: ~1000-1300 constraints (300x slower than simplified)
+- Cryptographically secure: DLP-based
+- Hiding property: Algebraic security
+- Binding property: Strong algebraic guarantees
+- Zero-knowledge: Full ZK property
+- Impractical: 5-10 second proof generation
 - ⚠️ **Security: Excellent but overkill for this use case**
 
 ### Complete Circuit Structure
@@ -490,10 +490,10 @@ rand = "0.8"
 - **Complexity:** Medium (vs trivial simplified, vs high EC)
 
 ### Security Properties
-- ✅ **Hiding:** Random blinding factor prevents coordinate guessing
-- ✅ **Binding:** Collision-resistant hash prevents forgery
-- ✅ **Zero-knowledge:** Coordinates not revealed in commitment
-- ✅ **Practical:** Fast enough for production use
+- **Hiding:** Random blinding factor prevents coordinate guessing
+- **Binding:** Collision-resistant hash prevents forgery
+- **Zero-knowledge:** Coordinates not revealed in commitment
+- **Practical:** Fast enough for production use
 
 ### When to Use Each Approach
 
