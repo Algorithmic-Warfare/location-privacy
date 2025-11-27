@@ -280,7 +280,7 @@ impl ProximityProver {
         player_coords: &Coordinates,
         _commitment: &Fr,
         max_distance_km: f64,
-    ) -> Result<(Proof<Bn254>, Vec<Fr>), Box<dyn std::error::Error>> {
+    ) -> Result<(Proof<Bn254>, Vec<Fr>), anyhow::Error> {
         // Convert max distance to squared units (in meters)
         let max_distance_m = (max_distance_km * 1000.0) as u64;
         let max_distance_squared = Fr::from(max_distance_m * max_distance_m);
@@ -455,7 +455,7 @@ pub mod trusted_setup {
         }
 
         /// Party A contributes randomness to the setup
-        pub fn party_a_contribute(&mut self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        pub fn party_a_contribute(&mut self) -> Result<Vec<u8>, anyhow::Error> {
             let mut rng = thread_rng();
 
             // Generate proving key with Party A's randomness
@@ -471,7 +471,7 @@ pub mod trusted_setup {
         }
 
         /// Party B contributes randomness to the setup
-        pub fn party_b_contribute(&mut self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        pub fn party_b_contribute(&mut self) -> Result<Vec<u8>, anyhow::Error> {
             let mut rng = thread_rng();
 
             // Generate proving key with Party B's randomness
@@ -488,13 +488,13 @@ pub mod trusted_setup {
 
         /// Combine contributions and generate final keys
         /// In a real MPC setup, this would combine the contributions securely
-        pub fn finalize_setup(self) -> Result<SetupResult, Box<dyn std::error::Error>> {
+        pub fn finalize_setup(self) -> Result<SetupResult, anyhow::Error> {
             // For simplicity, we'll use Party B's contribution as the final key
             // In a real system, contributions would be combined using MPC protocols
 
             let party_b_contribution = self
                 .party_b_contribution
-                .ok_or("Party B must contribute before finalizing")?;
+                .ok_or_else(|| anyhow::anyhow!("Party B must contribute before finalizing"))?;
 
             // Deserialize Party B's proving key
             let pk = ProvingKey::<Bn254>::deserialize_compressed(&party_b_contribution[..])?;
@@ -517,7 +517,7 @@ pub mod trusted_setup {
     /// Convenience function for single-party setup (not secure for production)
     pub fn single_party_setup(
         max_distance_squared: Fr,
-    ) -> Result<SetupResult, Box<dyn std::error::Error>> {
+    ) -> Result<SetupResult, anyhow::Error> {
         let mut rng = thread_rng();
 
         // Get Poseidon configuration
@@ -556,7 +556,7 @@ pub mod trusted_setup {
     /// Serialize setup result for storage
     pub fn serialize_setup_result(
         result: &SetupResult,
-    ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<u8>, Vec<u8>), anyhow::Error> {
         let mut pk_bytes = Vec::new();
         let mut vk_bytes = Vec::new();
 
@@ -570,7 +570,7 @@ pub mod trusted_setup {
     pub fn deserialize_setup_result(
         pk_bytes: &[u8],
         vk_bytes: &[u8],
-    ) -> Result<SetupResult, Box<dyn std::error::Error>> {
+    ) -> Result<SetupResult, anyhow::Error> {
         let proving_key = ProvingKey::<Bn254>::deserialize_compressed(pk_bytes)?;
         let verifying_key = VerifyingKey::<Bn254>::deserialize_compressed(vk_bytes)?;
 

@@ -1,0 +1,53 @@
+procs:
+  sui-local:
+    # Local validator with faucet; force fresh ephemeral genesis each start to avoid existing config dir errors
+    cmd: ["npm", "run", "start:sui"]
+  fund:
+    # Waits for RPC readiness then ensures an address exists and is funded
+    env:
+      FUND_DELAY_SECONDS: "3"   # Delay start to allow local node/faucet to boot
+      MAX_FAUCET_ATTEMPTS: "15" # (Optional) Increase faucet retry attempts
+      MAX_BALANCE_WAIT: "90"    # (Optional) Increase balance poll duration seconds
+    cmd: ["npm", "run", "fund"]
+  build_and_publish:
+    # Combined watcher: on .move source change -> build -> publish
+    # Simpler than previous two-process model; may republish even if bytecode unchanged.
+    # Improve later by adding hash/lock logic if needed.
+    cwd: .
+    cmd: ["npm", "run", "deploy:watch"]
+    autostart: true
+  move-tests:
+    # Run Move unit tests for the location package. Assumes local validator (sui-local) is up.
+    # --path points at the Move package; --force-recompile ensures fresh build after code changes.
+    # Add --filter <test_name_substring> to narrow tests when needed.
+    cwd: .
+    cmd: ["npm", "run", "test:move"]
+  rust-tests:
+    # Run Rust unit tests for the commitmentgen library
+    cwd: .
+    cmd: ["npm", "run", "test:rust"]
+  generate-e2e:
+    # Generate E2E test data (commitments, proofs, keys)
+    cwd: .
+    cmd: ["npm", "run", "generate:e2e"]
+  proof-server:
+    # Rust API server for proof generation (port 3001)
+    # Generates zkSNARK proofs for proximity verification
+    env:
+      RUST_LOG: "info,proof_server=debug"
+      SERVER_ADDR: "127.0.0.1:3001"
+    cwd: .
+    cmd: ["npm", "run", "server:start" , "--features", "sui-auto-publish"]
+    autostart: true  # Start automatically with other services
+  proof-client:
+    # React web client for requesting proofs (port 3000)
+    # Connect wallet, sign messages, request proofs from server
+    env:
+      VITE_PROOF_SERVER_URL: "http://localhost:3001"
+    cwd: packages/proof-client
+    cmd: ["npm", "run", "dev"]
+    autostart: true  # Start automatically with other services
+  shell:
+    shell: "${SHELL-bash}"
+    cwd: .
+    stop: SIGKILL

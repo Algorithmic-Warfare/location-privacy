@@ -233,8 +233,83 @@ cd crates/commitmentgen && cargo run --example e2e_test_setup
 ### Prerequisites
 
 - **Rust**: `cargo`, `rustc` (latest stable)
-- **Sui CLI**: For Move contract development
+- **Sui CLI**: For Move contract development and local network
+- **Node.js/npm**: For running automation scripts
+- **mprocs** (optional): For orchestrated local development (`cargo install mprocs`)
+- **jq**: For JSON parsing (`brew install jq` on macOS)
 - **Git**: For dependency management
+
+**Optional (for enhanced file watching):**
+- **watchexec**: For faster file watching (`cargo install watchexec-cli`)
+  - If not installed, a built-in polling-based watcher will be used instead
+
+### Quick Start
+
+```bash
+# Clone and navigate to the project
+cd location-privacy
+
+# Install npm dependencies (if any)
+npm install
+
+# Run full integration test (generates proofs and tests on-chain verification)
+npm run integration:test
+
+# Or use the manual approach:
+# 1. Generate test data
+npm run generate:e2e
+
+# 2. Run Move tests
+npm run test:move
+```
+
+### Local Development with Network
+
+Start a local Sui network and deploy contracts:
+
+```bash
+# Option 1: Use mprocs for orchestrated development (recommended)
+npm run start:local
+# This starts: local Sui node, faucet, auto-deployment, and testing
+
+# Option 2: Manual step-by-step
+# Terminal 1: Start local Sui network
+npm run start:sui
+
+# Terminal 2: Fund your account
+npm run fund
+
+# Terminal 3: Build and publish contracts
+npm run build:move
+npm run publish:local
+
+# Terminal 4: Run tests
+npm run test:move
+```
+
+### Available Scripts
+
+**Network Management:**
+- `npm run start:sui` - Start local Sui validator with faucet
+- `npm run fund` - Fund the configured account address
+- `npm run start:local` - Start orchestrated local environment (requires mprocs)
+
+**Move Contract Development:**
+- `npm run build:move` - Build Move contracts
+- `npm run test:move` - Run Move contract tests
+- `npm run publish:local` - Publish contracts to local network
+- `npm run deploy:watch` - Auto-rebuild and deploy on file changes (uses simple polling watcher)
+- `npm run deploy:watch:watchexec` - Auto-rebuild with watchexec (faster, requires installation)
+- `npm run fmt:move` - Format Move code
+
+**Rust Development:**
+- `npm run test:rust` - Run Rust library tests
+- `npm run generate:e2e` - Generate E2E test data (proofs, commitments, keys)
+- `npm run fmt:rust` - Format Rust code
+- `npm run lint:rust` - Lint Rust code with clippy
+
+**Integration Testing:**
+- `npm run integration:test` - Full E2E integration test (Rust → Move)
 
 ### Building
 
@@ -250,7 +325,11 @@ cd packages/location && sui move build
 ### Run a full e2e example test
 Start from project repo root.
 ```bash
-# Build the e2e test data (location commitments, proofs, verifying keys, public bytes) (for use in verifying in move)
+# Quick approach - single command
+npm run integration:test
+
+# Or step-by-step:
+# Build the e2e test data (location commitments, proofs, verifying keys, public bytes)
 cd crates/commitmentgen && cargo run --example e2e_test_setup 
 
 # Copy the generated data to move's test folder
@@ -263,14 +342,55 @@ cd ../../packages/location && sui move test
 ### Testing
 
 ```bash
-# Rust library tests (comprehensive test suite)
+# Run all tests
+npm run test:rust    # Rust library tests (27 test cases)
+npm run test:move    # Move contract tests
+npm run integration:test  # Full E2E integration
+
+# Or individual test runs:
 cd crates/commitmentgen && cargo test
-
-# Move contract tests
 cd packages/location && sui move test
-
-# Integration tests
 ./scripts/integration-test.sh
+```
+
+### Environment Configuration
+
+Before running the local network, configure your environment:
+
+1. **Copy the environment template:**
+   ```bash
+   cp .env.local.example .env.local  # If example exists
+   ```
+
+2. **Generate a new Sui keypair:**
+   ```bash
+   sui keytool generate ed25519
+   # Copy the private key to .env.local
+   ```
+
+3. **Edit `.env.local`:**
+   ```bash
+   PRIVATE_KEY_FILE=0xYOUR_PRIVATE_KEY_HERE
+   ```
+
+### Testing Data Constraints
+
+The integration tests validate all security data constraints:
+
+1. **Commitment Binding Test** - Proves cannot reuse proof with different commitment
+2. **Corrupted Proof Test** - Validates cryptographic integrity
+3. **Wrong Verification Key Test** - Ensures proof-VK pairing
+4. **Wrong Public Inputs Test** - Validates public input binding
+5. **Valid Proximity Tests** - Multiple scenarios within 10km radius
+6. **Invalid Coordinate Tests** - Boundary and edge case validation
+
+Run specific constraint tests:
+```bash
+# Run Move tests with filter
+cd packages/location
+sui move test --filter test_commitment_hash_mismatch_fails
+sui move test --filter test_corrupted_proof_fails
+sui move test --filter test_user_within_10km_succeeds
 ```
 
 ## Usage Examples
@@ -428,30 +548,110 @@ public fun get_nonce(commitment: &LocationCommitment): u64
 
 ## Deployment
 
+### Local Network Deployment
+
+Deploy to a local Sui network for development and testing:
+
+```bash
+# 1. Start local Sui network
+npm run start:sui
+
+# 2. In another terminal, fund your account
+npm run fund
+
+# 3. Build and publish contracts
+npm run build:move
+npm run publish:local
+
+# The publish script will output the PACKAGE_ID
+# This is saved to packages/location/.env.local
+```
+
+After deployment, you can interact with the contracts:
+```bash
+# View deployment info
+cat packages/location/.env.local
+
+# Run tests against deployed contracts
+npm run test:move
+```
+
 ### Production Setup
 
 1. **Trusted Setup Ceremony**:
    ```bash
    # Run secure multi-party setup
+   cd crates/commitmentgen
    cargo run --example trusted_setup_example
+   
+   # Store the proving key securely (HSM/KMS)
+   # Deploy verifying key on-chain
    ```
 
 2. **Key Management**:
    - Store proving keys in HSM or secure enclave
    - Deploy verifying keys to Sui blockchain
    - Implement key rotation procedures
+   - Secure storage for blinding factors
 
-3. **Contract Deployment**:
+3. **Contract Deployment to Testnet**:
    ```bash
+   # Switch to testnet environment
+   sui client switch --env testnet
+   
+   # Publish package
    cd packages/location
    sui client publish --gas-budget 100000000
+   
+   # Save the package ID and object IDs
    ```
 
-4. **Server Configuration**:
-   - Load proving keys from secure storage
-   - Configure Pedersen parameters
+4. **Contract Deployment to Mainnet**:
+   ```bash
+   # CRITICAL: Test thoroughly on testnet first!
+   sui client switch --env mainnet
+   
+   # Publish package
+   cd packages/location
+   sui client publish --gas-budget 100000000
+   
+   # Initialize ServerCap and transfer to server address
+   # Initialize VerifyingKey object
+   ```
+
+5. **Server Configuration**:
+   - Load proving keys from secure storage (HSM/KMS)
+   - Configure Poseidon parameters
    - Initialize commitment generator
    - Start proof generation service with rate limiting
+   - Set up monitoring and alerting
+
+### Deployment Checklist
+
+**Pre-Deployment:**
+- [ ] Complete trusted setup ceremony
+- [ ] Security audit of smart contracts
+- [ ] Security review of server implementation  
+- [ ] Set up HSM/KMS for key storage
+- [ ] Configure monitoring and alerting
+- [ ] Prepare incident response plan
+- [ ] Test thoroughly on testnet
+
+**Deployment:**
+- [ ] Deploy Move contract to testnet
+- [ ] Initialize ServerCap and VerifyingKey
+- [ ] Test E2E flow on testnet
+- [ ] Deploy to mainnet after testnet validation
+- [ ] Transfer ServerCap to production server
+- [ ] Create initial location commitments
+
+**Post-Deployment:**
+- [ ] Monitor proof generation latency
+- [ ] Track verification success rates
+- [ ] Set up automated backups of blinding factors
+- [ ] Implement rate limiting
+- [ ] Schedule key rotation
+- [ ] Document operational procedures
 
 ### Security Checklist
 
@@ -463,6 +663,8 @@ public fun get_nonce(commitment: &LocationCommitment): u64
 - [ ] Implement rate limiting and DDoS protection
 - [ ] Regular security audits of cryptographic implementation
 - [x] 254-bit blinding factors for commitment hiding
+- [ ] Secure ServerCap capability management
+- [ ] Key rotation procedures documented and tested
 
 ## Performance Characteristics
 

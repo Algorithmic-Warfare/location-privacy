@@ -1,67 +1,62 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Integration test script
-# Generates clean cryptographic data for Move contract integration
-
-# set -e  # Removed to allow script to continue even if examples fail
-
-echo "Location Privacy System - Data Generation"
-echo "=========================================="
+echo "============================================"
+echo "Location Privacy E2E Integration Test"
+echo "============================================"
+echo ""
 
 cd "$(dirname "$0")/.."
 
-# Navigate to the commitmentgen crate
+# Step 1: Build and test Rust library
+echo "Step 1: Building Rust library..."
 cd crates/commitmentgen
+cargo build --release
+echo "✓ Rust library built"
 
-echo "📦 Building commitment generator..."
-cargo build >/dev/null 2>&1
+# Step 2: Run Rust tests
+echo ""
+echo "Step 2: Running Rust tests..."
+cargo test
+echo "✓ Rust tests passed"
 
-echo " Running unit tests..."
-cargo test >/dev/null 2>&1
+# Step 3: Generate E2E test data (commitments, proofs, verifying keys)
+echo ""
+echo "Step 3: Generating E2E test data..."
+cargo run --example e2e_test_setup
+echo "✓ Test data generated"
 
-echo "🏗️  Generating cryptographic data..."
+# Step 4: Copy generated test to Move package
+echo ""
+echo "Step 4: Copying test data to Move package..."
+if [ -f "generated_move_tests.move" ]; then
+    cp generated_move_tests.move ../../packages/location/tests/location_tests.move
+    echo "✓ Test data copied to packages/location/tests/location_tests.move"
+else
+    echo "⚠ Warning: generated_move_tests.move not found. Skipping copy."
+fi
 
-# Create clean output file
-OUTPUT_FILE="../../integration_test_output.txt"
-echo "# Location Privacy Cryptographic Data" > "$OUTPUT_FILE"
-echo "# Generated: $(date)" >> "$OUTPUT_FILE"
-echo "# ===================================" >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
+# Step 5: Build Move contracts
+echo ""
+echo "Step 5: Building Move contracts..."
+cd ../../packages/location
+sui move build
+echo "✓ Move contracts built"
 
-# Run the e2e test and extract only the Move contract data
-echo "Running end-to-end test..."
-E2E_OUTPUT=$(cargo run --example e2e_test_setup 2>/dev/null)
-
-# Extract only the relevant Move contract data sections
-echo "// ===== MOVE CONTRACT TEST DATA =====" >> "$OUTPUT_FILE"
-echo "// Copy this data into your Move contract test" >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
-
-# Extract commitment bytes
-echo "$E2E_OUTPUT" | grep -A 1 "// Commitment bytes for create_commitment()" -A 2 >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
-
-# Extract verifying key bytes
-echo "$E2E_OUTPUT" | grep -A 1 "// Verifying key bytes" -A 50 | grep -v "^🎉" | grep -v "^Summary:" | grep -v "^Next steps:" | head -3 >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
-
-# Extract proof bytes
-echo "$E2E_OUTPUT" | grep -A 1 "// Proof bytes" -A 2 >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
-
-# Extract public inputs bytes
-echo "$E2E_OUTPUT" | grep -A 1 "// Public inputs bytes" -A 2 >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
-
-# Add usage notes
-echo "// ===== USAGE INSTRUCTIONS =====" >> "$OUTPUT_FILE"
-echo "// 1. Copy the vector data above into your Move contract test" >> "$OUTPUT_FILE"
-echo "// 2. Use commitment_bytes for create_commitment() function" >> "$OUTPUT_FILE"
-echo "// 3. Use vk_bytes, proof_bytes, and public_inputs for verify_proximity_proof()" >> "$OUTPUT_FILE"
-echo "// 4. Run 'sui move test' to verify the integration works" >> "$OUTPUT_FILE"
+# Step 6: Run Move tests
+echo ""
+echo "Step 6: Running Move tests..."
+sui move test
+echo "✓ Move tests passed"
 
 echo ""
-echo " Clean data extraction completed!"
-echo "📄 Output saved to: $OUTPUT_FILE"
+echo "============================================"
+echo "Integration test complete!"
+echo "============================================"
 echo ""
-echo "The file contains only the cryptographic data needed for Move contracts."
+echo "Summary:"
+echo "  ✓ Rust library built and tested"
+echo "  ✓ zkSNARK proofs and commitments generated"
+echo "  ✓ Move contracts verified proofs successfully"
+echo ""
+echo "All data constraints validated end-to-end."
