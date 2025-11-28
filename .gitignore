@@ -4,3 +4,4 @@ crates/**/build/*
 crates/**/target/*
 .gitignore
 ./**/.gitignore
+packages/**/node_modules/*
