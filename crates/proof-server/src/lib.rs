@@ -10,11 +10,15 @@ use commitmentgen::{
     coord_to_fr, create_poseidon_commitment, generate_blinding, get_poseidon_config,
     trusted_setup, Coordinates, ProximityProver,
 };
+use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::task;
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
+use rayon::ThreadPoolBuilder;
+use num_cpus;
 
 #[cfg(feature = "sui-auto-publish")]
 use sui_sdk::{
@@ -54,6 +58,7 @@ pub struct ServerData {
     pub commitment_id: Option<String>,
     pub verifying_key_id: Option<String>,
     pub package_id: Option<String>,
+    pub poseidon_config: PoseidonConfig<ark_bn254::Fr>,
 }
 
 // ============================================================================
@@ -175,63 +180,90 @@ async fn generate_proof(
     State(state): State<AppState>,
     Json(req): Json<GenerateProofRequest>,
 ) -> Result<Json<GenerateProofResponse>, AppError> {
+    use std::time::Instant;
+    let start_time = Instant::now();
+    
     info!(
         "Generating proof for player coordinates: ({}, {}, {})",
         req.player_x, req.player_y, req.player_z
     );
-
-    let data = state.server_data.read().await;
-
-    // Get Poseidon config
-    let poseidon_config = get_poseidon_config();
-
-    // Create player coordinates
+    
+    // Snapshot data from state
+    let (target_location, blinding, poseidon_config, commitment_bytes, commitment_id, verifying_key_id) = {
+        let data = state.server_data.read().await;
+        (
+            data.target_location.clone(),
+            data.blinding,
+            data.poseidon_config.clone(),
+            data.commitment_bytes.clone(),
+            data.commitment_id.clone(),
+            data.verifying_key_id.clone(),
+        )
+    };
+    
     let player_coords = Coordinates {
         x: req.player_x,
         y: req.player_y,
         z: req.player_z,
     };
-
-    // Generate commitment hash for the target location
+    let player_coords_for_response = player_coords.clone();
+    
+    // Create commitment hash (like benchmark does)
     let commitment_hash = create_poseidon_commitment(
-        coord_to_fr(data.target_location.x),
-        coord_to_fr(data.target_location.y),
-        coord_to_fr(data.target_location.z),
-        data.blinding,
+        coord_to_fr(target_location.x),
+        coord_to_fr(target_location.y),
+        coord_to_fr(target_location.z),
+        blinding,
         &poseidon_config,
     );
-
-    // Generate proof
-    let (proof, public_inputs) = state.prover.generate_proof(
-        &data.target_location,
-        &data.blinding,
-        &player_coords,
+    
+    // Run proof generation directly for optimal performance
+    let target_clone = target_location.clone();
+    let player_clone = player_coords.clone();
+    let max_distance_km = req.max_distance_km;
+    
+    let before_proof = Instant::now();
+    
+    // Run proof generation directly - it's fast enough (~15-20ms) and spawn_blocking
+    // adds significant overhead (6+ seconds) due to thread pool scheduling
+    // The proof generation is CPU-bound, not I/O-bound, so blocking is acceptable
+    let result = state.prover.generate_proof(
+        &target_clone,
+        &blinding,
+        &player_clone,
         &commitment_hash,
-        req.max_distance_km,
-    )?;
+        max_distance_km,
+    );
+    
+    let after_proof = Instant::now();
+    info!("Time to generate proof (direct): {:?}", after_proof.duration_since(before_proof));
+    
+    let (proof, public_inputs) = result?;
 
-    // Serialize proof and public inputs
+    // Serialize proof and public inputs (lightweight)
     let proof_bytes = ProximityProver::serialize_proof(&proof);
     let public_inputs_bytes = ProximityProver::serialize_public_inputs(&public_inputs);
 
+    let total_time = Instant::now().duration_since(start_time);
     info!(
-        "Proof generated successfully: {} bytes, public inputs: {} bytes",
+        "Proof generated successfully: {} bytes, public inputs: {} bytes (total time: {:?})",
         proof_bytes.len(),
-        public_inputs_bytes.len()
+        public_inputs_bytes.len(),
+        total_time
     );
 
     Ok(Json(GenerateProofResponse {
         proof_bytes: hex::encode(proof_bytes),
         public_inputs: hex::encode(public_inputs_bytes),
-        commitment_id: data.commitment_id.clone(),
+        commitment_id,
         player_coordinates: PlayerCoordinates {
-            x: player_coords.x,
-            y: player_coords.y,
-            z: player_coords.z,
+            x: player_coords_for_response.x,
+            y: player_coords_for_response.y,
+            z: player_coords_for_response.z,
         },
         target_info: TargetInfo {
-            commitment_bytes: hex::encode(&data.commitment_bytes),
-            max_distance_km: req.max_distance_km,
+            commitment_bytes: hex::encode(&commitment_bytes),
+            max_distance_km,
         },
     }))
 }
@@ -450,14 +482,21 @@ async fn publish_verifying_key_on_chain(
 
 pub async fn initialize_server() -> Result<AppState> {
     info!("Initializing proof server...");
-
+    
+    // Rayon is already initialized in main() before Tokio
+    info!("Rayon thread count: {}", rayon::current_num_threads());
     // Perform trusted setup
     info!("Performing trusted setup...");
     let max_distance_squared = ark_bn254::Fr::from(100_000_000u64); // (10km)^2
     let setup_result = trusted_setup::single_party_setup(max_distance_squared)?;
-    
+    println!("Proving key a_query: {}", setup_result.proving_key.a_query.len());
     let prover = ProximityProver::new(setup_result.proving_key.clone());
     info!("Trusted setup complete");
+    info!("Circuit constraint count: {}", prover.constraint_count());
+
+    // Or get detailed info:
+    let circuit_info = prover.circuit_info();
+    info!("{}", circuit_info);
 
     // Serialize verifying key
     use ark_serialize::CanonicalSerialize;
@@ -485,7 +524,15 @@ pub async fn initialize_server() -> Result<AppState> {
         blinding,
         &poseidon_config,
     );
-
+    // Log CPU features for diagnostics
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        info!("CPU SSE:   {}", std::is_x86_feature_detected!("sse"));
+        info!("CPU SSE2:  {}", std::is_x86_feature_detected!("sse2"));
+        info!("CPU SSE4.2: {}", std::is_x86_feature_detected!("sse4.2"));
+        info!("CPU AVX:   {}", std::is_x86_feature_detected!("avx"));
+        info!("CPU AVX2:  {}", std::is_x86_feature_detected!("avx2"));
+    }
     // Serialize commitment
     let mut commitment_bytes = Vec::new();
     commitment_hash.serialize_compressed(&mut commitment_bytes)?;
@@ -512,14 +559,20 @@ pub async fn initialize_server() -> Result<AppState> {
 
     #[cfg(feature = "sui-auto-publish")]
     {
+        println!("🔧 sui-auto-publish feature is ENABLED");
         let server_cap_str = std::env::var("SUI_SERVER_CAP_ID").ok();
         let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:9000".to_string());
         let keystore_path = std::env::var("SUI_KEYSTORE_PATH")
             .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".sui/sui_config/sui.keystore").to_string_lossy().to_string());
 
+        println!("📦 SUI_PACKAGE_ID: {:?}", package_id_opt);
+        println!("🔑 SUI_SERVER_CAP_ID: {:?}", server_cap_str);
+        println!("🌐 SUI_RPC_URL: {}", sui_rpc_url);
+        
         // Attempt auto-publish if configured
         if let (Some(pkg_id), Some(cap_id)) = (package_id_opt.as_ref(), server_cap_str.as_ref()) {
             info!("Auto-publish configuration detected");
+            println!("✅ Auto-publish configuration detected - attempting to publish...");
             
             match (ObjectID::from_str(&pkg_id), ObjectID::from_str(&cap_id)) {
                 (Ok(package_id), Ok(server_cap_id)) => {
@@ -557,10 +610,14 @@ pub async fn initialize_server() -> Result<AppState> {
                                             sender,
                                         ).await {
                                             Ok(vk_id) => {
+                                                println!("✅ Verifying key published successfully: {}", vk_id);
                                                 info!("✓ Verifying key published: {}", vk_id);
                                                 verifying_key_id = Some(vk_id);
                                             }
-                                            Err(e) => warn!("Failed to publish verifying key: {}", e),
+                                            Err(e) => {
+                                                println!("❌ Failed to publish verifying key: {}", e);
+                                                warn!("Failed to publish verifying key: {}", e);
+                                            }
                                         }
                                         
                                         // Publish commitment
@@ -573,10 +630,14 @@ pub async fn initialize_server() -> Result<AppState> {
                                             sender,
                                         ).await {
                                             Ok(comm_id) => {
+                                                println!("✅ Commitment published successfully: {}", comm_id);
                                                 info!("✓ Commitment published: {}", comm_id);
                                                 commitment_id = Some(comm_id);
                                             }
-                                            Err(e) => warn!("Failed to publish commitment: {}", e),
+                                            Err(e) => {
+                                                println!("❌ Failed to publish commitment: {}", e);
+                                                warn!("Failed to publish commitment: {}", e);
+                                            }
                                         }
                                 }
                                 Err(e) => warn!("Failed to load keystore: {}", e),
@@ -588,12 +649,14 @@ pub async fn initialize_server() -> Result<AppState> {
                 _ => warn!("Invalid Package ID or ServerCap ID format"),
             }
         } else {
+            println!("⚠️  Auto-publish disabled: Missing SUI_PACKAGE_ID or SUI_SERVER_CAP_ID");
             info!("Auto-publish disabled. Set SUI_PACKAGE_ID and SUI_SERVER_CAP_ID to enable.");
         }
     }
 
     #[cfg(not(feature = "sui-auto-publish"))]
     {
+        println!("❌ sui-auto-publish feature is DISABLED - build with --features sui-auto-publish to enable");
         info!("Auto-publish feature not enabled. Build with --features sui-auto-publish to enable on-chain publishing.");
     }
 
@@ -602,10 +665,24 @@ pub async fn initialize_server() -> Result<AppState> {
         blinding,
         commitment_bytes,
         verifying_key_bytes,
-        commitment_id,
-        verifying_key_id,
-        package_id: package_id_opt,
+        commitment_id: commitment_id.clone(),
+        verifying_key_id: verifying_key_id.clone(),
+        package_id: package_id_opt.clone(),
+        poseidon_config,
     };
+
+    // Print final auto-publish status
+    println!("\n📊 Auto-Publish Status Summary:");
+    println!("   Package ID: {:?}", package_id_opt);
+    println!("   Verifying Key ID: {:?}", verifying_key_id);
+    println!("   Commitment ID: {:?}", commitment_id);
+    println!("   Setup Complete: {}\n", 
+        if commitment_id.is_some() && verifying_key_id.is_some() { 
+            "✅ YES - Server ready for verification" 
+        } else { 
+            "⚠️  NO - Manual setup required" 
+        }
+    );
 
     Ok(AppState {
         prover: Arc::new(prover),

@@ -15,17 +15,25 @@ path = "examples/commitment_demo.rs"
 name = "e2e_test_setup"
 path = "examples/e2e_test_setup.rs"
 
+[[example]]
+name = "benchmark_proof_generation"
+path = "examples/benchmark_proof_generation.rs"
+
 [dependencies]
+# Curve and field arithmetic - BN254 inherits parallel from ark-ec/ark-ff
 ark-bn254 = "0.4.0"
-ark-ec = "0.4.0"
-ark-ff = "0.4.0"
-ark-groth16 = "0.4.0"
+ark-ec = { version = "0.4.0", features = ["parallel"] }
+ark-ff = { version = "0.4.0", features = ["parallel", "asm"] }
+# zkSNARK proving system with parallelization
+ark-groth16 = { version = "0.4.0", features = ["parallel"] }
 ark-relations = "0.4.0"
-ark-std = "0.4.0"
+ark-std = { version = "0.4.0", features = ["parallel"] }
 ark-r1cs-std = "0.4.0"
 ark-crypto-primitives = { version = "0.4.0", features = ["r1cs", "sponge", "crh"] }
 ark-serialize = "0.4.0"
 ark-snark = "0.4.0"
+# Parallelization
+rayon = "1.10"
 rand = "0.8.5"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
@@ -33,4 +41,42 @@ num-bigint = "0.4.4"
 anyhow = "1.0"
 
 [profile.release]
-debug-assertions = true
+opt-level = 3
+lto = "fat"           
+codegen-units = 1
+
+# CRITICAL: Force all dependencies to be optimized
+# This ensures arkworks crates are always compiled with optimizations
+[profile.release.package."*"]
+opt-level = 3
+
+# Explicitly optimize arkworks crates (belt and suspenders)
+[profile.release.package.ark-ff]
+opt-level = 3
+
+[profile.release.package.ark-ec]
+opt-level = 3
+
+[profile.release.package.ark-std]
+opt-level = 3
+
+[profile.release.package.ark-serialize]
+opt-level = 3
+
+[profile.release.package.ark-groth16]
+opt-level = 3
+
+[profile.release.package.ark-bn254]
+opt-level = 3
+
+[profile.release.package.ark-crypto-primitives]
+opt-level = 3
+
+[profile.release.package.ark-r1cs-std]
+opt-level = 3
+
+[profile.release.package.ark-relations]
+opt-level = 3
+
+[profile.release.package.ark-snark]
+opt-level = 3

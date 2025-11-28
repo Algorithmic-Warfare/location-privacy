@@ -3,9 +3,15 @@ name = "proof-server"
 version = "0.1.0"
 edition = "2021"
 
+[[example]]
+name = "benchmark_proof_async"
+path = "examples/benchmark_proof_async.rs"
+
 [dependencies]
 # Web framework
 axum = "0.7"
+num_cpus = "1.16"
+rayon = "1.11"
 tokio = { version = "1", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
@@ -20,6 +26,7 @@ commitmentgen = { path = "../commitmentgen" }
 ark-bn254 = "0.4"
 ark-groth16 = "0.4"
 ark-serialize = "0.4"
+ark-crypto-primitives = { version = "0.4.0", features = ["r1cs", "sponge", "crh"] }
 hex = "0.4"
 
 # Sui SDK (optional - for auto-publish)
@@ -50,3 +57,48 @@ sui-auto-publish = ["sui-sdk", "sui-types", "sui-keys", "shared-crypto"]
 
 [dev-dependencies]
 reqwest = { version = "0.11", features = ["json"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+
+# CRITICAL FIX: Force all dependencies to be optimized in release mode
+# This is especially important for path dependencies and arkworks crates
+[profile.release.package."*"]
+opt-level = 3
+
+# Specifically ensure arkworks crates are optimized
+[profile.release.package.ark-ff]
+opt-level = 3
+
+[profile.release.package.ark-ec]
+opt-level = 3
+
+[profile.release.package.ark-std]
+opt-level = 3
+
+[profile.release.package.ark-serialize]
+opt-level = 3
+
+[profile.release.package.ark-groth16]
+opt-level = 3
+
+[profile.release.package.ark-bn254]
+opt-level = 3
+
+[profile.release.package.ark-crypto-primitives]
+opt-level = 3
+
+[profile.release.package.ark-r1cs-std]
+opt-level = 3
+
+[profile.release.package.ark-relations]
+opt-level = 3
+
+# Optimize the local commitmentgen dependency
+[profile.release.package.commitmentgen]
+opt-level = 3
