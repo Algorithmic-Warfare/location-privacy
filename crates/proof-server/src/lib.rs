@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -14,11 +14,8 @@ use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::task;
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
-use rayon::ThreadPoolBuilder;
-use num_cpus;
 
 #[cfg(feature = "sui-auto-publish")]
 use sui_sdk::{
@@ -189,7 +186,7 @@ async fn generate_proof(
     );
     
     // Snapshot data from state
-    let (target_location, blinding, poseidon_config, commitment_bytes, commitment_id, verifying_key_id) = {
+    let (target_location, blinding, poseidon_config, commitment_bytes, commitment_id, _verifying_key_id) = {
         let data = state.server_data.read().await;
         (
             data.target_location.clone(),

@@ -15,10 +15,6 @@ path = "examples/commitment_demo.rs"
 name = "e2e_test_setup"
 path = "examples/e2e_test_setup.rs"
 
-[[example]]
-name = "benchmark_proof_generation"
-path = "examples/benchmark_proof_generation.rs"
-
 [dependencies]
 # Curve and field arithmetic - BN254 inherits parallel from ark-ec/ark-ff
 ark-bn254 = "0.4.0"
