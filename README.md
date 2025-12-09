@@ -8,18 +8,24 @@ Zero-knowledge proximity verification for 3D coordinates using Poseidon commitme
 # One-command integration test
 npm run integration:test
 
-# Full local environment (requires: cargo install mprocs)
+# Full local environment (requires: cargo install mprocs). After it starts you may need to
+# "restart" scripts to make sure various things execute in order.
+# The flow is:
+# 1. Start local SUI network
+# 2. Fund a wallet address with gas to submit transactions to the blockchain.
+# 3. Build and deploy SUI objects
+# 4. Run tests against deployed objects
 npm run start:local
 ```
 
 ## Overview
 
-Prove two 3D coordinates are within a distance threshold (e.g., 10km) without revealing the target location.
+Prove two 3D coordinates are within a distance threshold ("<10km" in tests) without revealing the target location.
 
 **Key Features:**
 - **Zero-Knowledge**: Proofs reveal only proximity, not coordinates
 - **Offline Attack Resistant**: 254-bit blinding prevents coordinate guessing  
-- **Efficient**: Poseidon hash optimized for zkSNARK circuits (~150-200 constraints)
+- **Efficient**: Poseidon hash optimized for zkSNARK circuits
 - **Fast**: 15-20ms proof generation in release mode
 
 ## Architecture
@@ -31,7 +37,7 @@ location-privacy/
 │   └── proof-server/      # HTTP server for proof generation
 ├── packages/
 │   ├── location/          # Move: On-chain verification contracts
-│   └── proof-client/      # React: Web UI for proof requests
+│   └── proof-client/      # React: Web UI for proof requests - interacting requires a SUI wallet w/ local network support - I used Surf Wallet chrome extension for testing.
 ├── docs/                  # Documentation
 └── scripts/               # Build and deployment automation
 ```
