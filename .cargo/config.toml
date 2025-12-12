@@ -1,0 +1,20 @@
+# Cargo configuration for optimized zkSNARK proof generation
+# This configuration maximizes performance for cryptographic operations
+
+[build]
+# Use native CPU features for maximum performance
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-apple-darwin]
+# macOS-specific optimizations
+rustflags = [
+    "-C", "target-cpu=native",
+    "-C", "opt-level=3",
+]
+
+[target.aarch64-apple-darwin]
+# Apple Silicon optimizations
+rustflags = [
+    "-C", "target-cpu=native",
+    "-C", "opt-level=3",
+]

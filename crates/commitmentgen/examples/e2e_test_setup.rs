@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
             println!("Error during trusted setup: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
         Err(panic_payload) => {
             println!("Panic occurred during trusted setup: {:?}", panic_payload);
@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
             println!("Error generating proof: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
         Err(panic_payload) => {
             println!(
@@ -304,7 +304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
             println!("Error generating second proof: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
         Err(panic_payload) => {
             println!(

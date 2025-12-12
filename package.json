@@ -1,0 +1,31 @@
+{
+    "name": "location-privacy",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "start:sui": "bash scripts/start_sui.sh",
+        "fund": "bash scripts/fund_address.sh",
+        "start:local": "bash scripts/run_local_env.sh",
+        "build:move": "sui move build --path packages/location",
+        "test:move": "bash scripts/test.sh",
+        "publish:local": "bash scripts/publish_local.sh packages/location",
+        "deploy:watch": "bash scripts/watch_simple.sh",
+        "deploy:watch:watchexec": "watchexec -w packages/location/sources -e move -- bash scripts/deploy_watch.sh",
+        "test:rust": "cd crates/commitmentgen && cargo test",
+        "generate:e2e": "cd crates/commitmentgen && cargo run --example e2e_test_setup",
+        "integration:test": "bash scripts/integration-test.sh",
+        "server:build": "cd crates/proof-server && cargo build --release --features sui-auto-publish",
+        "server:start": "cd crates/proof-server && cargo run --release --features sui-auto-publish",
+        "server:dev": "cd crates/proof-server && cargo watch -x 'run --release'",
+        "client:install": "cd packages/proof-client && npm install",
+        "client:dev": "cd packages/proof-client && npm run dev",
+        "client:build": "cd packages/proof-client && npm run build",
+        "setup:commitment": "bash scripts/setup_commitment.sh",
+        "e2e:api": "bash scripts/e2e-api-test.sh",
+        "fmt:move": "sui move format --path packages/location",
+        "fmt:rust": "cd crates/commitmentgen && cargo fmt",
+        "lint:rust": "cd crates/commitmentgen && cargo clippy"
+    },
+    "devDependencies": {},
+    "description": "Cryptographically secure proximity verification using zkSNARKs and Poseidon hash commitments"
+}

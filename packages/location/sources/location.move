@@ -127,7 +127,7 @@ module location_addr::proximity {
         proof_bytes: vector<u8>,
         public_inputs: vector<u8>,
         ctx: &mut TxContext
-    ) {
+    ): bool {
         // Validate input sizes
         assert!(vector::length(&proof_bytes) >= 128, 2); // Groth16 proof is ~128 bytes
         assert!(vector::length(&public_inputs) == 64, 3); // Public inputs: commitment_hash (32), max_distance_squared (32)
@@ -155,6 +155,8 @@ module location_addr::proximity {
             verifier: tx_context::sender(ctx),
             nonce_used: commitment.nonce - 1,
         });
+        
+        true // Return true if all validations passed
     }
 
     /// Get commitment details

@@ -1,4 +1,7 @@
 
-packages/location/build/*
-crates/commitmentgen/build/*
-crates/commitmentgen/target/*
+packages/**/build/*
+crates/**/build/*
+crates/**/target/*
+.gitignore
+./**/.gitignore
+packages/**/node_modules/*

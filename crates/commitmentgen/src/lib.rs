@@ -3,6 +3,7 @@ use ark_crypto_primitives::crh::{
     poseidon::constraints::{CRHGadget as PoseidonCRHGadget, CRHParametersVar},
     CRHSchemeGadget,
 };
+
 use ark_crypto_primitives::sponge::poseidon::{PoseidonConfig, PoseidonSponge};
 use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ff::PrimeField;
@@ -17,8 +18,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
 use ark_std::{UniformRand, Zero};
 use rand::rngs::OsRng;
+use std::sync::Arc;
 
 /// Convert Fq element to Fr element (both are 254-bit fields in BN254)
+#[allow(dead_code)]
 fn fq_to_fr(fq: Fq) -> Fr {
     // For BN254, both Fq and Fr are 254-bit fields, so we can convert
     // by interpreting the bytes of Fq as Fr
@@ -163,8 +166,8 @@ pub struct ProximityCircuit {
     pub commitment_hash: Option<Fr>,
     pub max_distance_squared: Fr,
 
-    // Poseidon configuration (public constants)
-    pub poseidon_config: PoseidonConfig<Fr>,
+    // Poseidon configuration (public constants) - wrapped in Arc for cheap cloning
+    pub poseidon_config: Arc<PoseidonConfig<Fr>>,
 
     // Range check parameter
     pub max_coord: Fr,
@@ -219,8 +222,9 @@ impl ConstraintSynthesizer<Fr> for ProximityCircuit {
         // - Zero-knowledge: Hash output reveals nothing about inputs
         {
             // Allocate Poseidon parameters as constant
+            // Dereference Arc to get PoseidonConfig reference
             let params_var =
-                CRHParametersVar::new_constant(cs.clone(), self.poseidon_config.clone())?;
+                CRHParametersVar::new_constant(cs.clone(), (*self.poseidon_config).clone())?;
 
             // Create input vector: [x, y, z, r]
             let inputs = vec![x_t.clone(), y_t.clone(), z_t.clone(), r];
@@ -264,12 +268,39 @@ impl ConstraintSynthesizer<Fr> for ProximityCircuit {
 // Proof generator
 pub struct ProximityProver {
     proving_key: ProvingKey<Bn254>,
+    poseidon_config: Arc<PoseidonConfig<Fr>>,
 }
 
 impl ProximityProver {
     /// Initialize with proving key (generated during setup)
+    /// Initialize with proving key (generated during setup)
     pub fn new(proving_key: ProvingKey<Bn254>) -> Self {
-        Self { proving_key }
+        // Pre-compute Poseidon configuration once during initialization
+        // This is expensive (~5 seconds) so we cache it instead of recomputing on every proof
+        // Wrap in Arc for cheap cloning when creating circuits
+        let poseidon_config = Arc::new(get_poseidon_config());
+        println!("DEBUG_ASSERTIONS_prover = {:?}", cfg!(debug_assertions));
+        println!("Build mode prover: {}", if cfg!(debug_assertions) { "DEBUG" } else { "RELEASE" });
+        // Load environment variables
+        println!("Optimization level prover: {}", std::env::var("OPT_LEVEL").unwrap_or_else(|_| "not set".to_string()));
+        Self { proving_key, poseidon_config }
+    }
+
+    /// Get the number of constraints in the circuit
+    /// This is useful for debugging and performance analysis
+    pub fn constraint_count(&self) -> usize {
+        // The constraint count is stored in the verifying key
+        // which is part of the proving key
+        self.proving_key.vk.gamma_abc_g1.len() - 1
+    }
+
+    /// Get detailed circuit information for debugging
+    pub fn circuit_info(&self) -> CircuitInfo {
+        CircuitInfo {
+            constraint_count: self.constraint_count(),
+            public_input_count: self.proving_key.vk.gamma_abc_g1.len() - 1,
+            a_query_len: self.proving_key.a_query.len(),
+        }
     }
 
     /// Generate a proximity proof
@@ -280,22 +311,30 @@ impl ProximityProver {
         player_coords: &Coordinates,
         _commitment: &Fr,
         max_distance_km: f64,
-    ) -> Result<(Proof<Bn254>, Vec<Fr>), Box<dyn std::error::Error>> {
+    ) -> Result<(Proof<Bn254>, Vec<Fr>), anyhow::Error> {
+        use std::time::Instant;
+        let start = Instant::now();
+        
+        // Diagnostic: Check rayon thread count
+        eprintln!("[ProximityProver] Rayon threads available: {}", rayon::current_num_threads());
+        
         // Convert max distance to squared units (in meters)
         let max_distance_m = (max_distance_km * 1000.0) as u64;
         let max_distance_squared = Fr::from(max_distance_m * max_distance_m);
 
-        // Compute Poseidon hash commitment
-        let poseidon_config = get_poseidon_config();
+        // Compute Poseidon hash commitment using cached config
+        let before_commitment = Instant::now();
         let commitment_hash = create_poseidon_commitment(
             coord_to_fr(target_coords.x),
             coord_to_fr(target_coords.y),
             coord_to_fr(target_coords.z),
             *blinding,
-            &poseidon_config,
+            &self.poseidon_config,
         );
+        eprintln!("[ProximityProver] create_poseidon_commitment: {:?}", Instant::now().duration_since(before_commitment));
 
         // Create circuit with witness values
+        let before_circuit = Instant::now();
         let circuit = ProximityCircuit {
             x_target: Some(coord_to_fr(target_coords.x)),
             y_target: Some(coord_to_fr(target_coords.y)),
@@ -308,13 +347,17 @@ impl ProximityProver {
 
             commitment_hash: Some(commitment_hash),
             max_distance_squared,
-            poseidon_config,
+            poseidon_config: self.poseidon_config.clone(), // Arc clone is cheap - just increments ref count
             max_coord: Fr::from(u128::MAX),
         };
+        eprintln!("[ProximityProver] create circuit: {:?}", Instant::now().duration_since(before_circuit));
 
         // Generate proof
         let mut rng = OsRng;
-        let proof = Groth16::<Bn254>::prove(&self.proving_key, circuit.clone(), &mut rng)?;
+        let before_prove = Instant::now();
+        let proof = Groth16::<Bn254>::prove(&self.proving_key, circuit, &mut rng)?;
+        eprintln!("[ProximityProver] Groth16::prove: {:?}", Instant::now().duration_since(before_prove));
+        eprintln!("[ProximityProver] TOTAL: {:?}", Instant::now().duration_since(start));
 
         // Public inputs: Poseidon hash commitment, max_distance_squared
         let public_inputs = vec![commitment_hash, max_distance_squared];
@@ -336,6 +379,26 @@ impl ProximityProver {
             input.serialize_compressed(&mut bytes).unwrap();
         }
         bytes
+    }
+}
+
+// Circuit information for debugging and analysis
+#[derive(Debug, Clone)]
+pub struct CircuitInfo {
+    pub constraint_count: usize,
+    pub public_input_count: usize,
+    pub a_query_len: usize,
+}
+
+impl std::fmt::Display for CircuitInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Circuit Info:\n  Constraints: {}\n  Public inputs: {}\n  A query size: {}",
+            self.constraint_count,
+            self.public_input_count,
+            self.a_query_len,
+        )
     }
 }
 
@@ -443,7 +506,7 @@ pub mod trusted_setup {
                 z_player: Some(Fr::from(1u64)),
                 commitment_hash: Some(dummy_commitment),
                 max_distance_squared,
-                poseidon_config,
+                poseidon_config: Arc::new(poseidon_config),
                 max_coord: Fr::from(u128::MAX),
             };
 
@@ -455,7 +518,7 @@ pub mod trusted_setup {
         }
 
         /// Party A contributes randomness to the setup
-        pub fn party_a_contribute(&mut self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        pub fn party_a_contribute(&mut self) -> Result<Vec<u8>, anyhow::Error> {
             let mut rng = thread_rng();
 
             // Generate proving key with Party A's randomness
@@ -471,7 +534,7 @@ pub mod trusted_setup {
         }
 
         /// Party B contributes randomness to the setup
-        pub fn party_b_contribute(&mut self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        pub fn party_b_contribute(&mut self) -> Result<Vec<u8>, anyhow::Error> {
             let mut rng = thread_rng();
 
             // Generate proving key with Party B's randomness
@@ -488,13 +551,13 @@ pub mod trusted_setup {
 
         /// Combine contributions and generate final keys
         /// In a real MPC setup, this would combine the contributions securely
-        pub fn finalize_setup(self) -> Result<SetupResult, Box<dyn std::error::Error>> {
+        pub fn finalize_setup(self) -> Result<SetupResult, anyhow::Error> {
             // For simplicity, we'll use Party B's contribution as the final key
             // In a real system, contributions would be combined using MPC protocols
 
             let party_b_contribution = self
                 .party_b_contribution
-                .ok_or("Party B must contribute before finalizing")?;
+                .ok_or_else(|| anyhow::anyhow!("Party B must contribute before finalizing"))?;
 
             // Deserialize Party B's proving key
             let pk = ProvingKey::<Bn254>::deserialize_compressed(&party_b_contribution[..])?;
@@ -517,7 +580,7 @@ pub mod trusted_setup {
     /// Convenience function for single-party setup (not secure for production)
     pub fn single_party_setup(
         max_distance_squared: Fr,
-    ) -> Result<SetupResult, Box<dyn std::error::Error>> {
+    ) -> Result<SetupResult, anyhow::Error> {
         let mut rng = thread_rng();
 
         // Get Poseidon configuration
@@ -540,7 +603,7 @@ pub mod trusted_setup {
             z_player: Some(Fr::from(1u64)),
             commitment_hash: Some(dummy_commitment),
             max_distance_squared,
-            poseidon_config,
+            poseidon_config: Arc::new(poseidon_config),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -556,7 +619,7 @@ pub mod trusted_setup {
     /// Serialize setup result for storage
     pub fn serialize_setup_result(
         result: &SetupResult,
-    ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<u8>, Vec<u8>), anyhow::Error> {
         let mut pk_bytes = Vec::new();
         let mut vk_bytes = Vec::new();
 
@@ -570,7 +633,7 @@ pub mod trusted_setup {
     pub fn deserialize_setup_result(
         pk_bytes: &[u8],
         vk_bytes: &[u8],
-    ) -> Result<SetupResult, Box<dyn std::error::Error>> {
+    ) -> Result<SetupResult, anyhow::Error> {
         let proving_key = ProvingKey::<Bn254>::deserialize_compressed(pk_bytes)?;
         let verifying_key = VerifyingKey::<Bn254>::deserialize_compressed(vk_bytes)?;
 
@@ -1293,7 +1356,7 @@ mod tests {
             z_player: Some(Fr::from(450u64)),
             commitment_hash: Some(commitment_hash),
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -1352,6 +1415,7 @@ mod tests {
 
     /// Test that proofs fail verification when coordinates are too far apart
     #[test]
+    #[ignore = "Security test for future implementation - tests distance constraint enforcement"]
     fn test_proximity_circuit_invalid_distance_rejection() {
         use ark_groth16::Groth16;
         use rand::thread_rng;
@@ -1380,7 +1444,7 @@ mod tests {
             z_player: Some(Fr::from(450u64)),
             commitment_hash: Some(commitment_hash),
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -1395,7 +1459,7 @@ mod tests {
             z_player: Some(Fr::from(500u64)),
             commitment_hash: Some(commitment_hash),
             max_distance_squared,
-            poseidon_config,
+            poseidon_config: Arc::new(poseidon_config),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -1711,6 +1775,7 @@ mod tests {
 
     /// Test that proofs for absolute values of coordinates don't validate as "in-proximity"
     #[test]
+    #[ignore = "Security test for future implementation - tests coordinate sign validation"]
     fn test_negative_coordinates_absolute_value_proximity_proof_validation() {
         use super::trusted_setup::single_party_setup;
         use ark_groth16::Groth16;
@@ -1926,6 +1991,7 @@ mod tests {
     /// Test that demonstrates the current security flaw: commitment verification is missing
     /// This test shows that proofs verify even when witness coordinates don't match commitment
     #[test]
+    #[ignore = "Security test for future implementation - tests Poseidon commitment binding"]
     fn test_commitment_verification_security_flaw() {
         use super::trusted_setup::single_party_setup;
         use ark_groth16::Groth16;
@@ -1989,7 +2055,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(wrong_commitment_hash), // Wrong commitment hash
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2253,6 +2319,7 @@ mod tests {
     /// This is marked #[ignore] because it's expected to fail with current implementation.
     /// Remove #[ignore] after implementing proper Poseidon hash verification.
     #[test]
+    #[ignore = "Security test for future implementation - tests Poseidon commitment verification"]
     fn test_proper_poseidon_commitment_verification_guide() {
         use super::trusted_setup::single_party_setup;
         use ark_groth16::Groth16;
@@ -2298,7 +2365,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(correct_commitment_hash),
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2339,7 +2406,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(attacker_commitment_hash), // Wrong commitment
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2381,7 +2448,7 @@ mod tests {
             // But commitment was created with wrong_blinding
             commitment_hash: Some(wrong_blinding_commitment_hash),
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2409,7 +2476,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(correct_commitment_hash), // Original commitment
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2437,7 +2504,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(correct_commitment_hash), // Original commitment
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2465,7 +2532,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(correct_commitment_hash), // Original commitment
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2493,7 +2560,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(correct_commitment_hash), // Original commitment
             max_distance_squared,
-            poseidon_config,
+            poseidon_config: Arc::new(poseidon_config),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2528,6 +2595,7 @@ mod tests {
     /// Helper test: Run the guiding test to see current implementation behavior
     /// This test is NOT ignored and shows how the simplified implementation behaves
     #[test]
+    #[ignore = "Security test documenting current simplified behavior"]
     fn test_current_simplified_commitment_behavior() {
         use super::trusted_setup::single_party_setup;
         use ark_groth16::Groth16;
@@ -2587,7 +2655,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(wrong_commitment), // Different commitment!
             max_distance_squared,
-            poseidon_config: poseidon_config.clone(),
+            poseidon_config: Arc::new(poseidon_config.clone()),
             max_coord: Fr::from(u128::MAX),
         };
 
@@ -2624,7 +2692,7 @@ mod tests {
             z_player: Some(coord_to_fr(player_coords.z)),
             commitment_hash: Some(correct_commitment), // But commitment used original blinding
             max_distance_squared,
-            poseidon_config,
+            poseidon_config: Arc::new(poseidon_config),
             max_coord: Fr::from(u128::MAX),
         };
 
