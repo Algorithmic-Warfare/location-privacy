@@ -402,64 +402,6 @@ impl std::fmt::Display for CircuitInfo {
     }
 }
 
-/// Complete example usage
-pub fn example_usage() {
-    // 1. Setup phase (one-time)
-    // Get Poseidon configuration for commitment generation
-    let poseidon_config = get_poseidon_config();
-
-    // 2. Server creates commitment for SSU location
-    let ssu_location = Coordinates {
-        x: 1000i128, // 1000 meters in X direction
-        y: 2000i128, // 2000 meters in Y direction
-        z: 500i128,  // 500 meters above reference plane
-    };
-
-    let blinding = generate_blinding();
-    let commitment_hash = create_poseidon_commitment(
-        coord_to_fr(ssu_location.x),
-        coord_to_fr(ssu_location.y),
-        coord_to_fr(ssu_location.z),
-        blinding,
-        &poseidon_config,
-    );
-
-    // Serialize commitment hash for on-chain storage
-    let mut commitment_bytes = Vec::new();
-    commitment_hash
-        .serialize_compressed(&mut commitment_bytes)
-        .unwrap();
-
-    println!(
-        "Poseidon commitment created: {} bytes",
-        commitment_bytes.len()
-    );
-    println!("Commitment hash: {:?}", commitment_hash);
-    // Now publish commitment_bytes on-chain using create_commitment()
-
-    // 3. Player requests proximity check
-    let _player_location = Coordinates {
-        x: 1500i128, // 1500 meters in X direction (~500m from SSU)
-        y: 1800i128, // 1800 meters in Y direction (~200m from SSU)
-        z: 450i128,  // 450 meters above reference plane
-    };
-
-    // 4. Server generates proof (requires proving key from trusted setup)
-    // let prover = ProximityProver::new(proving_key);
-    // let (proof, public_inputs) = prover.generate_proof(
-    //     &ssu_location,
-    //     &blinding,
-    //     &player_location,
-    //     &G1Affine::default(), // Commitment parameter not used in Poseidon version
-    //     10.0, // 10km max distance
-    // ).unwrap();
-
-    // 5. Submit to chain
-    // let proof_bytes = ProximityProver::serialize_proof(&proof);
-    // let inputs_bytes = ProximityProver::serialize_public_inputs(&public_inputs);
-    // Call verify_proximity_proof() with these bytes
-}
-
 /// Trusted setup for generating proving and verifying keys
 pub mod trusted_setup {
     use super::*;
